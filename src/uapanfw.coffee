@@ -113,7 +113,7 @@ module.exports = (robot) ->
     bl_search = msg.match[2] if msg.match[2]
 
     arr = []
-    fmt = '%4s %60s %10s %s'
+    fmt = '%-4s %-50s %-15s %s'
     arr.push sprintf fmt, 'Type', 'Value', 'Expiration', 'Creator'
     for obj in data
       expires = moment(obj.expires)
@@ -146,6 +146,14 @@ module.exports = (robot) ->
       type: msg.match[1]
       val: msg.match[2]
       creator: msg.envelope.user.name
+
+    if bl.val.toLowerCase().indexOf('https://') == 0
+      usermsg = "Blacklisting of https links not supported."
+      return msg.reply usermsg
+
+    if bl.val.toLowerCase().indexOf('http') == 0
+      bl.val = bl.val.replace(/http:\/\//i,'')
+
     if msg.match[3]?
       expires = msg.match[3]
       extra = expires.match /\+(\d)([hdwMQy])/
@@ -168,8 +176,8 @@ module.exports = (robot) ->
       data.push bl
       fs.writeFileSync blacklistfile, JSON.stringify(data), 'utf-8'
 
-      usermsg = "Added #{bl.val} to blacklist, expiring #{bl.expires}.  " +
-        "Change will be applied in < 5 minutes."
+      usermsg = "Added #{bl.val} to firewall blacklist, " +
+        "expiring #{bl.expires}.  Change will be applied in < 5 minutes."
       msg.reply usermsg
 
       logmsg = "#{modulename}: robot responded to #{msg.envelope.user.name}: " +
@@ -209,7 +217,7 @@ module.exports = (robot) ->
     data = newdata
     fs.writeFileSync blacklistfile, JSON.stringify(data), 'utf-8'
 
-    usermsg = "Removed #{deltaN} entries from blacklist.  " +
+    usermsg = "Removed #{deltaN} entries from firewall blacklist.  " +
       "Change will be applied in < 5 minutes.\n" +
       "Removed: ```"+ arr.join("\n") + "```"
     msg.reply usermsg
