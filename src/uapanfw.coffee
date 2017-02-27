@@ -25,11 +25,11 @@ blacklistfile = modulename + ".json"
 
 isAuthorized = (robot, msg) ->
   u = msg.envelope.user
-  return true if robot.auth.hasRole(u,'fw') and robot.auth.isSudo(u)
-  msg.reply "Not authorized.  Missing fw role or not sudo."
+  return true if robot.auth.hasRole(u,'fw')
+  msg.reply "Not authorized.  Missing fw role."
   return false
 
-isSudo = (msg) ->
+isSudo = (robot, msg) ->
   u = msg.envelope.user
   return true if robot.auth.isSudo(u)
   msg.reply "Sudo required."
@@ -138,7 +138,7 @@ module.exports = (robot) ->
 
   robot.respond /fw (?:blacklist|b) add (url|cidr) ([^ ]+)(?: ([^ ]+)|)$/i, (msg) ->
     return unless isAuthorized robot, msg
-    return unless isSudo msg
+    return unless isSudo robot, msg
 
     bl =
       created: moment().format()
@@ -178,7 +178,7 @@ module.exports = (robot) ->
 
   robot.respond /fw (?:blacklist|b) (?:delete|del|d) (url|cidr) ([^ ]+)$/i, (msg) ->
     return unless isAuthorized robot, msg
-    return unless isSudo msg
+    return unless isSudo robot, msg
 
     bl_type = msg.match[1]
     bl_search = msg.match[2]
