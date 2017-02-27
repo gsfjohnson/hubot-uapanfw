@@ -18,6 +18,7 @@
 
 fs = require 'fs'
 moment = require 'moment'
+sprintf = require("sprintf-js").sprintf
 
 modulename = 'fw'
 blacklistfile = modulename + ".json"
