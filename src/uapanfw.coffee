@@ -23,6 +23,18 @@ sprintf = require("sprintf-js").sprintf
 modulename = 'fw'
 blacklistfile = modulename + ".json"
 
+isAuthorized = (robot, msg) ->
+  u = msg.envelope.user
+  return true if robot.auth.hasRole(u,'fw') and robot.auth.isSudo(u)
+  msg.reply "Not authorized.  Missing fw role or not sudo."
+  return false
+
+isSudo = (msg) ->
+  u = msg.envelope.user
+  return true if robot.auth.isSudo(u)
+  msg.reply "Sudo required."
+  return false
+
 module.exports = (robot) ->
 
   data = []
@@ -125,9 +137,8 @@ module.exports = (robot) ->
     robot.logger.info logmsg
 
   robot.respond /fw (?:blacklist|b) add (url|cidr) ([^ ]+)(?: ([^ ]+)|)$/i, (msg) ->
-    unless isAuthorized robot, msg, ['fw','sudo']
-      errmsg = "Only users with fw and sudo roles allowed this command."
-      return msg.reply errmsg
+    return unless isAuthorized robot, msg
+    return unless isSudo msg
 
     bl =
       created: moment().format()
@@ -166,9 +177,8 @@ module.exports = (robot) ->
       robot.logger.info logmsg
 
   robot.respond /fw (?:blacklist|b) (?:delete|del|d) (url|cidr) ([^ ]+)$/i, (msg) ->
-    unless isAuthorized robot, msg, ['fw','sudo']
-      errmsg = "Only users with fw and sudo roles allowed this command."
-      return msg.reply errmsg
+    return unless isAuthorized robot, msg
+    return unless isSudo msg
 
     bl_type = msg.match[1]
     bl_search = msg.match[2]
