@@ -113,7 +113,7 @@ module.exports = (robot) ->
       #console.log obj
       arr.push "#{obj.type} `#{obj.val}` #{expires.fromNow()}"
 
-    robot.reply arr.join "\n"
+    msg.reply arr.join "\n"
 
     logmsg = "#{modulename}: robot responded to #{msg.envelope.user.name}: " +
       "displayed blacklist items and expirations"
