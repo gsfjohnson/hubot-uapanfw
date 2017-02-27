@@ -72,7 +72,7 @@ module.exports = (robot) ->
     robot.logger.info logmsg
 
   robot.respond /fw(?: help|)$/, (msg) ->
-    cmds = []
+    cmds = ['```']
     arr = [
       modulename + " blacklist - show blacklist"
       modulename + " blacklist add (url|cidr) <url|cidr> - add to blacklist"
@@ -82,8 +82,9 @@ module.exports = (robot) ->
     for str in arr
       cmd = str.split " - "
       cmds.push "#{cmd[0]} - #{cmd[1]}"
+    cmds.push '```'
 
-    msg.reply "```\n" + cmds.join "\n" + "\n```"
+    msg.reply cmds.join "\n"
 
     logmsg = "#{modulename}: robot responded to #{msg.envelope.user.name}: " +
       "displayed #{modulename} help"
@@ -117,7 +118,7 @@ module.exports = (robot) ->
       #console.log obj
       arr.push sprintf fmt, obj.type, obj.val, expires.fromNow(), obj.creator
 
-    msg.reply "Blacklist items and expirations\n```\n"+ arr.join "\n" + "\n```"
+    msg.reply "Blacklist items and expirations\n```\n"+ arr.join("\n") + "\n```"
 
     logmsg = "#{modulename}: robot responded to #{msg.envelope.user.name}: " +
       "displayed blacklist items and expirations"
@@ -200,7 +201,7 @@ module.exports = (robot) ->
 
     usermsg = "Removed #{deltaN} entries from blacklist.  " +
       "Change will be applied in < 5 minutes.\n" +
-      "Removed: ```"+ arr.join "\n" + "```"
+      "Removed: ```"+ arr.join("\n") + "```"
     msg.reply usermsg
 
     logmsg = "#{modulename}: robot responded to #{msg.envelope.user.name}: " +
