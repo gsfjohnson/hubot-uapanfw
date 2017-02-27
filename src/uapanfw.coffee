@@ -179,7 +179,7 @@ module.exports = (robot) ->
 
     arr = []
     newdata = []
-    fmt = '%4s %60s %10s %s'
+    fmt = '%-4s %-50s %-15s %s'
     arr.push sprintf fmt, 'Type', 'Value', 'Expiration', 'Creator'
     for obj in data
       expires = moment(obj.expires)
