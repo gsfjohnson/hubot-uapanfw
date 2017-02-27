@@ -54,7 +54,8 @@ module.exports = (robot) ->
     robot.send {room: msg.message?.user?.name}, cmds.join "\n"
 
   robot.respond /fw (?:blacklist|b)$/i, (msg) ->
-    robot.logger.info "#{modulename}: #{msg.envelope.user.name} requested: blacklist"
+    logmsg = "#{modulename}: #{msg.envelope.user.name} requested: blacklist"
+    robot.logger.info logmsg
     data = fs.readFileSync blacklistfile, 'utf-8'
 
     robot.send {room: msg.message?.user?.name}, data.join "\n"
@@ -63,8 +64,8 @@ module.exports = (robot) ->
     bl =
       created: moment().format()
       expires: moment().add(1, 'months').format()
-      type = msg.match[1]
-      val = msg.match[2]
+      type: msg.match[1]
+      val: msg.match[2]
     if msg.match.length > 2
       expires = msg.match[3]
       extra = expires.match(/+(\d)([hdwMQy])/)
@@ -76,9 +77,12 @@ module.exports = (robot) ->
         bl.expires = moment(expires)
       else
         failed = true
-        robot.send {room: msg.message?.user?.name}, "invalid expiration date: #{expires}"
+        logmsg = "invalid expiration date: #{expires}"
+        robot.send {room: msg.message?.user?.name}, logmsg
     
     unless failed
-      robot.logger.info "#{modulename}: #{msg.envelope.user.name} requested: blacklist #{bl.type} #{bl.val} expires #{bl.expires}"
+      logmsg = "#{modulename}: #{msg.envelope.user.name} requested: " +
+        "blacklist #{bl.type} #{bl.val} expires #{bl.expires}"
+      robot.logger.info logmsg
       data.push bl
       fs.writeFileSync blacklistfile, JSON.stringify(data), 'utf-8'
