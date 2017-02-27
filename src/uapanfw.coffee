@@ -87,16 +87,33 @@ module.exports = (robot) ->
       "displayed #{modulename} help"
     robot.logger.info logmsg
 
-  robot.respond /fw (?:blacklist|b)$/i, (msg) ->
+  robot.respond /fw (?:blacklist|b)(?: (cidr|url)(?: ([^ ]+)|)|)$/i, (msg) ->
     logmsg = "#{modulename}: #{msg.envelope.user.name} requested: blacklist"
     robot.logger.info logmsg
 
-    arr = ['Blacklist items and expirations:']
+    bl_type = false
+    bl_type = msg.match[1] if msg.match[1]
+
+    bl_search = false
+    bl_search = msg.match[2] if msg.match[2]
+
+    arr = ['Blacklist items and expirations']
     for obj in data
       expires = moment(obj.expires)
-      if expires.isAfter()
-        arr.push "`#{obj.val}` #{expires.fromNow()}"
-    robot.send {room: msg.message?.user?.name}, arr.join "\n"
+      if bl_type and bl_type != obj.type
+        #console.log 'skipping type: '+ obj.type
+        continue
+      if bl_search and obj.val.indexOf(bl_search) == -1
+        #console.log 'skipping search: '+ obj.val
+        continue
+      if expires.isBefore() # now
+        #console.log 'skipping expires: '+ obj.expires
+        continue
+      #console.log 'adding to array: '
+      #console.log obj
+      arr.push "#{obj.type} `#{obj.val}` #{expires.fromNow()}"
+
+    robot.reply arr.join "\n"
 
     logmsg = "#{modulename}: robot responded to #{msg.envelope.user.name}: " +
       "displayed blacklist items and expirations"
