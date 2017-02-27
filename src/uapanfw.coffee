@@ -11,6 +11,7 @@
 #   hubot fw - fw commands
 #
 # Notes:
+#   requires hubot-auth be present
 #
 # Author:
 #   gfjohnson
@@ -73,15 +74,15 @@ module.exports = (robot) ->
     cmds = []
     arr = [
       modulename + " blacklist - show blacklist"
-      modulename + " blacklist url <url> - add url to blacklist"
-      modulename + " blacklist cidr <cidr> - add cidr to blacklist"
+      modulename + " blacklist add (url|cidr) <url|cidr> - add to blacklist"
+      modulename + " blacklist del (url|cidr) <url|cidr> - del from blacklist"
     ]
 
     for str in arr
       cmd = str.split " - "
-      cmds.push "`#{cmd[0]}` - #{cmd[1]}"
+      cmds.push "#{cmd[0]} - #{cmd[1]}"
 
-    robot.send {room: msg.message?.user?.name}, cmds.join "\n"
+    msg.reply "```\n" + cmds.join "\n" + "\n```"
 
     logmsg = "#{modulename}: robot responded to #{msg.envelope.user.name}: " +
       "displayed #{modulename} help"
@@ -97,7 +98,9 @@ module.exports = (robot) ->
     bl_search = false
     bl_search = msg.match[2] if msg.match[2]
 
-    arr = ['Blacklist items and expirations']
+    arr = []
+    fmt = '%4s %60s %10s %s'
+    arr.push sprintf fmt, 'Type', 'Value', 'Expiration', 'Creator'
     for obj in data
       expires = moment(obj.expires)
       if bl_type and bl_type != obj.type
@@ -111,20 +114,25 @@ module.exports = (robot) ->
         continue
       #console.log 'adding to array: '
       #console.log obj
-      arr.push "#{obj.type} `#{obj.val}` #{expires.fromNow()}"
+      arr.push sprintf fmt, obj.type, obj.val, expires.fromNow(), obj.creator
 
-    msg.reply arr.join "\n"
+    msg.reply "Blacklist items and expirations\n```\n"+ arr.join "\n" + "\n```"
 
     logmsg = "#{modulename}: robot responded to #{msg.envelope.user.name}: " +
       "displayed blacklist items and expirations"
     robot.logger.info logmsg
 
-  robot.respond /fw (?:blacklist|b) (url|cidr) ([^ ]+)(?: ([^ ]+)|)$/i, (msg) ->
+  robot.respond /fw (?:blacklist|b) add (url|cidr) ([^ ]+)(?: ([^ ]+)|)$/i, (msg) ->
+    unless isAuthorized robot, msg, ['fw','sudo']
+      errmsg = "Only users with fw and sudo roles allowed this command."
+      return msg.reply errmsg
+
     bl =
       created: moment().format()
       expires: moment().add(1, 'months').format()
       type: msg.match[1]
       val: msg.match[2]
+      creator: msg.envelope.user.name
     if msg.match[3]?
       expires = msg.match[3]
       extra = expires.match /\+(\d)([hdwMQy])/
@@ -136,8 +144,8 @@ module.exports = (robot) ->
         bl.expires = moment(expires).format()
       else
         failed = true
-        logmsg = "invalid expiration date: #{expires}"
-        robot.send {room: msg.message?.user?.name}, logmsg
+        usermsg = "invalid expiration date: #{expires}"
+        msg.reply usermsg
     
     unless failed
       logmsg = "#{modulename}: #{msg.envelope.user.name} requested: " +
@@ -147,6 +155,53 @@ module.exports = (robot) ->
       data.push bl
       fs.writeFileSync blacklistfile, JSON.stringify(data), 'utf-8'
 
+      usermsg = "Added #{bl.val} to blacklist, expiring #{bl.expires}.  " +
+        "Change will be applied in < 5 minutes."
+      msg.reply usermsg
+
       logmsg = "#{modulename}: robot responded to #{msg.envelope.user.name}: " +
         "added entry to blacklist"
       robot.logger.info logmsg
+
+  robot.respond /fw (?:blacklist|b) (?:delete|del|d) (url|cidr) ([^ ]+)$/i, (msg) ->
+    unless isAuthorized robot, msg, ['fw','sudo']
+      errmsg = "Only users with fw and sudo roles allowed this command."
+      return msg.reply errmsg
+
+    bl_type = msg.match[1]
+    bl_search = msg.match[2]
+
+    logmsg = "#{modulename}: #{msg.envelope.user.name} requested: " +
+      "blacklist delete #{bl_type} #{bl_search}"
+    robot.logger.info logmsg
+
+    arr = []
+    newdata = []
+    fmt = '%4s %60s %10s %s'
+    arr.push sprintf fmt, 'Type', 'Value', 'Expiration', 'Creator'
+    for obj in data
+      expires = moment(obj.expires)
+      if bl_type and bl_type != obj.type
+        newdata.push obj
+        continue
+      if bl_search and obj.val.indexOf(bl_search) == -1
+        newdata.push obj
+        continue
+      if expires.isBefore() # now
+        newdata.push obj
+        continue
+      arr.push sprintf fmt, obj.type, obj.val, expires.fromNow(), obj.creator
+
+    # drop deleted records
+    deltaN = data.length - newdata.length
+    data = newdata
+    fs.writeFileSync blacklistfile, JSON.stringify(data), 'utf-8'
+
+    usermsg = "Removed #{deltaN} entries from blacklist.  " +
+      "Change will be applied in < 5 minutes.\n" +
+      "Removed: ```"+ arr.join "\n" + "```"
+    msg.reply usermsg
+
+    logmsg = "#{modulename}: robot responded to #{msg.envelope.user.name}: " +
+      "removed #{deltaN} entries from blacklist"
+    robot.logger.info logmsg
