@@ -22,6 +22,7 @@ sprintf = require("sprintf-js").sprintf
 
 modulename = 'fw'
 blacklistfile = modulename + ".json"
+displayfmt = '%-4s %-50s %-15s %s'
 
 isAuthorized = (robot, msg) ->
   u = msg.envelope.user
@@ -29,10 +30,10 @@ isAuthorized = (robot, msg) ->
   msg.reply "Not authorized.  Missing fw role."
   return false
 
-isSudo = (robot, msg) ->
+is2fa = (robot, msg) ->
   u = msg.envelope.user
-  return true if robot.auth.isSudo(u)
-  msg.reply "Sudo required."
+  return true if robot.auth.is2fa(u)
+  msg.reply "2fa required.  Use `auth 2fa` to validate identity."
   return false
 
 module.exports = (robot) ->
@@ -125,8 +126,7 @@ module.exports = (robot) ->
     bl_search = msg.match[2] if msg.match[2]
 
     arr = []
-    fmt = '%-4s %-50s %-15s %s'
-    arr.push sprintf fmt, 'Type', 'Value', 'Expiration', 'Creator'
+    arr.push sprintf displayfmt, 'Type', 'Value', 'Expiration', 'Creator'
     for obj in fwdata.blacklist
       expires = moment(obj.expires)
       if bl_type and bl_type != obj.type
@@ -140,7 +140,7 @@ module.exports = (robot) ->
         continue
       #console.log 'adding to array: '
       #console.log obj
-      arr.push sprintf fmt, obj.type, obj.val, expires.fromNow(), obj.creator
+      arr.push sprintf displayfmt, obj.type, obj.val, expires.fromNow(), obj.creator
 
     msg.reply "Blacklist items and expirations\n```\n"+ arr.join("\n") + "\n```"
 
@@ -152,7 +152,7 @@ module.exports = (robot) ->
 
   robot.respond /fw (?:blacklist|b) add (url|cidr) ([^ ]+)(?: ([^ ]+)|)$/i, (msg) ->
     return unless isAuthorized robot, msg
-    return unless isSudo robot, msg
+    return unless is2fa robot, msg
 
     who = msg.envelope.user.name
 
@@ -205,7 +205,7 @@ module.exports = (robot) ->
 
   robot.respond /fw (?:blacklist|b) (?:delete|del|d) (url|cidr) ([^ ]+)$/i, (msg) ->
     return unless isAuthorized robot, msg
-    return unless isSudo robot, msg
+    return unless is2fa robot, msg
 
     who = msg.envelope.user.name
     bl_type = msg.match[1]
@@ -217,8 +217,7 @@ module.exports = (robot) ->
 
     arr = []
     newdata = []
-    fmt = '%-4s %-50s %-15s %s'
-    arr.push sprintf fmt, 'Type', 'Value', 'Expiration', 'Creator'
+    arr.push sprintf displayfmt, 'Type', 'Value', 'Expiration', 'Creator'
     for obj in fwdata.blacklist
       expires = moment(obj.expires)
       if bl_type and bl_type != obj.type
@@ -230,13 +229,13 @@ module.exports = (robot) ->
       if expires.isBefore() # now
         newdata.push obj
         continue
-      arr.push sprintf fmt, obj.type, obj.val, expires.fromNow(), obj.creator
+      arr.push sprintf displayfmt, obj.type, obj.val, expires.fromNow(), obj.creator
 
     deltaN = fwdata.blacklist.length - newdata.length
     if deltaN > 0
       usermsg = "Removed `#{deltaN}` entries from firewall blacklist.  " +
-        "Change will be applied in < 5 minutes.\n" +
-        "Removed: ```"+ arr.join("\n") + "```"
+        "Change will be applied in < 5 minutes. Removed: " +
+        "```"+ arr.join("\n") + "```"
       fwdata.blacklist = newdata
       fs.writeFileSync blacklistfile, JSON.stringify(fwdata), 'utf-8'
     else
