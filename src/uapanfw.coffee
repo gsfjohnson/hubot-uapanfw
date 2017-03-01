@@ -190,8 +190,8 @@ module.exports = (robot) ->
     fwdata.blacklist.push bl
     fs.writeFileSync blacklistfile, JSON.stringify(fwdata), 'utf-8'
 
-    usermsg = "Added #{bl.val} to firewall blacklist, " +
-      "expiring #{bl.expires}.  Change will be applied in < 5 minutes."
+    usermsg = "Added `#{bl.val}` to firewall blacklist, " +
+      "expiring `#{bl.expires}`.  Change will be applied in < 5 minutes."
     msg.reply usermsg
 
     logmsg = "#{modulename}: robot responded to #{who}: " +
@@ -238,7 +238,7 @@ module.exports = (robot) ->
     fs.writeFileSync blacklistfile, JSON.stringify(fwdata), 'utf-8'
 
     if deltaN > 0
-      usermsg = "Removed #{deltaN} entries from firewall blacklist.  " +
+      usermsg = "Removed `#{deltaN}` entries from firewall blacklist.  " +
         "Change will be applied in < 5 minutes.\n" +
         "Removed: ```"+ arr.join("\n") + "```"
     else usermsg = "Blacklist delete request did not match any records."
@@ -263,7 +263,7 @@ module.exports = (robot) ->
 
     fwdata.notify.push who unless who in fwdata.notify
 
-    usermsg = "Added #{who} to firewall blacklist notifications."
+    usermsg = "Added `#{who}` to firewall blacklist notifications."
     msg.reply usermsg
 
     logmsg = "#{modulename}: robot responded to #{user.name}: " +
@@ -280,7 +280,7 @@ module.exports = (robot) ->
     logmsg = "#{modulename}: #{who} requested: subscribers"
     robot.logger.info logmsg
 
-    usermsg = "Subscriber list: "+ fwdata.notify.join(', ')
+    usermsg = "Subscriber list: `"+ fwdata.notify.join('`, `') + "`"
     msg.reply usermsg
 
     logmsg = "#{modulename}: robot responded to #{who}: " +
@@ -300,7 +300,7 @@ module.exports = (robot) ->
     n = fwdata.notify.indexOf(who)
     fwdata.notify.splice(n, 1) if n > -1
 
-    usermsg = "Removed #{who} from firewall blacklist notifications."
+    usermsg = "Removed `#{who}` from firewall blacklist notifications."
     msg.reply usermsg
 
     logmsg = "#{modulename}: robot responded to #{user.name}: " +
