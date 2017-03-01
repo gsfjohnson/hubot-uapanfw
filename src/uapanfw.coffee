@@ -97,6 +97,8 @@ module.exports = (robot) ->
       modulename + " blacklist - show blacklist"
       modulename + " blacklist add (url|cidr) <url|cidr> - add to blacklist"
       modulename + " blacklist del (url|cidr) <url|cidr> - del from blacklist"
+      modulename + " blacklist notify [username] - notify when changes happen"
+      modulename + " blacklist subscribers - list notify subscribers"
     ]
 
     for str in arr
@@ -109,6 +111,8 @@ module.exports = (robot) ->
     logmsg = "#{modulename}: robot responded to #{msg.envelope.user.name}: " +
       "displayed #{modulename} help"
     robot.logger.info logmsg
+
+    return
 
   robot.respond /fw (?:blacklist|b)(?: (cidr|url)(?: ([^ ]+)|)|)$/i, (msg) ->
     logmsg = "#{modulename}: #{msg.envelope.user.name} requested: blacklist"
@@ -270,13 +274,13 @@ module.exports = (robot) ->
 
     return
 
-  robot.respond /fw (?:blacklist|b) (?:notify|n) (?:list|l)$/i, (msg) ->
+  robot.respond /fw (?:blacklist|b) (?:subscribers|s)$/i, (msg) ->
     who = msg.envelope.user.name
 
-    logmsg = "#{modulename}: #{who} requested: notify list"
+    logmsg = "#{modulename}: #{who} requested: subscribers"
     robot.logger.info logmsg
 
-    usermsg = "Notify list: "+ fwdata.notify.join(', ')
+    usermsg = "Subscriber list: "+ fwdata.notify.join(', ')
     msg.reply usermsg
 
     logmsg = "#{modulename}: robot responded to #{who}: " +
