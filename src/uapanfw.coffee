@@ -233,7 +233,7 @@ module.exports = (robot) ->
       arr.push sprintf fmt, obj.type, obj.val, expires.fromNow(), obj.creator
 
     # drop deleted records
-    deltaN = data.length - newdata.length
+    deltaN = fwdata.length - newdata.length
     fwdata.blacklist = newdata
     fs.writeFileSync blacklistfile, JSON.stringify(fwdata), 'utf-8'
 
