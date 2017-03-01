@@ -37,12 +37,16 @@ isSudo = (robot, msg) ->
 
 module.exports = (robot) ->
 
-  data = []
+  fwdata =
+    notify: []
+    blacklist: []
   try
-    fwdata = fs.readFileSync blacklistfile, 'utf-8'
-    if fwdata
-      data = JSON.parse(fwdata)
-      console.log "#{modulename} blacklist loaded: " + data.length + " entries"
+    fwdata = JSON.parse fs.readFileSync blacklistfile, 'utf-8'
+    if Array.isArray(fwdata)
+      fwdata =
+        notify: []
+        blacklist: fwdata
+    #robot.logger.info "#{modulename} data loaded"
   catch error
     console.log('Unable to read file', error) unless error.code is 'ENOENT'
 
@@ -53,7 +57,7 @@ module.exports = (robot) ->
     robot.logger.info logmsg
 
     arr = []
-    for obj in data
+    for obj in fwdata.blacklist
       if obj.type == 'url' and moment(obj.expires).isAfter()
         arr.push obj.val
     content = '# nothing here yet! #'
@@ -64,6 +68,8 @@ module.exports = (robot) ->
     logmsg = "#{modulename}: robot responded to web request: sent url blacklist"
     robot.logger.info logmsg
 
+    return
+
   robot.router.get "/#{robot.name}/#{modulename}/blacklist/cidr", (req, res) ->
     clientip = req.connection.remoteAddress || req.socket.remoteAddress ||
       req.connection.socket.remoteAddress
@@ -71,7 +77,7 @@ module.exports = (robot) ->
     robot.logger.info logmsg
 
     arr = []
-    for obj in data
+    for obj in fwdata.blacklist
       if obj.type == 'cidr' and moment(obj.expires).isAfter()
         arr.push obj.val
     content = '# nothing here yet! #'
@@ -82,6 +88,8 @@ module.exports = (robot) ->
     logmsg = "#{modulename}: robot responded to web request: " +
       "sent cidr blacklist"
     robot.logger.info logmsg
+
+    return
 
   robot.respond /fw(?: help|)$/, (msg) ->
     cmds = ['```']
@@ -115,7 +123,7 @@ module.exports = (robot) ->
     arr = []
     fmt = '%-4s %-50s %-15s %s'
     arr.push sprintf fmt, 'Type', 'Value', 'Expiration', 'Creator'
-    for obj in data
+    for obj in fwdata.blacklist
       expires = moment(obj.expires)
       if bl_type and bl_type != obj.type
         #console.log 'skipping type: '+ obj.type
@@ -136,16 +144,20 @@ module.exports = (robot) ->
       "displayed blacklist items and expirations"
     robot.logger.info logmsg
 
+    return
+
   robot.respond /fw (?:blacklist|b) add (url|cidr) ([^ ]+)(?: ([^ ]+)|)$/i, (msg) ->
     return unless isAuthorized robot, msg
     return unless isSudo robot, msg
+
+    who = msg.envelope.user.name
 
     bl =
       created: moment().format()
       expires: moment().add(1, 'months').format()
       type: msg.match[1]
       val: msg.match[2]
-      creator: msg.envelope.user.name
+      creator: who
 
     if bl.val.toLowerCase().indexOf('https://') == 0
       usermsg = "Blacklisting of https links not supported."
@@ -164,34 +176,38 @@ module.exports = (robot) ->
       else if moment(expires).isValid()
         bl.expires = moment(expires).format()
       else
-        failed = true
         usermsg = "invalid expiration date: #{expires}"
-        msg.reply usermsg
+        return msg.reply usermsg
     
-    unless failed
-      logmsg = "#{modulename}: #{msg.envelope.user.name} requested: " +
-        "blacklist #{bl.type} #{bl.val} expires #{bl.expires}"
-      robot.logger.info logmsg
+    logmsg = "#{modulename}: #{who} requested: " +
+      "blacklist #{bl.type} #{bl.val} expires #{bl.expires}"
+    robot.logger.info logmsg
 
-      data.push bl
-      fs.writeFileSync blacklistfile, JSON.stringify(data), 'utf-8'
+    fwdata.blacklist.push bl
+    fs.writeFileSync blacklistfile, JSON.stringify(fwdata), 'utf-8'
 
-      usermsg = "Added #{bl.val} to firewall blacklist, " +
-        "expiring #{bl.expires}.  Change will be applied in < 5 minutes."
-      msg.reply usermsg
+    usermsg = "Added #{bl.val} to firewall blacklist, " +
+      "expiring #{bl.expires}.  Change will be applied in < 5 minutes."
+    msg.reply usermsg
 
-      logmsg = "#{modulename}: robot responded to #{msg.envelope.user.name}: " +
-        "added entry to blacklist"
-      robot.logger.info logmsg
+    logmsg = "#{modulename}: robot responded to #{who}: " +
+      "added entry to blacklist"
+    robot.logger.info logmsg
+
+    for un in fwdata.notify
+      robot.send { room: un }, usermsg unless un == who
+
+    return
 
   robot.respond /fw (?:blacklist|b) (?:delete|del|d) (url|cidr) ([^ ]+)$/i, (msg) ->
     return unless isAuthorized robot, msg
     return unless isSudo robot, msg
 
+    who = msg.envelope.user.name
     bl_type = msg.match[1]
     bl_search = msg.match[2]
 
-    logmsg = "#{modulename}: #{msg.envelope.user.name} requested: " +
+    logmsg = "#{modulename}: #{who} requested: " +
       "blacklist delete #{bl_type} #{bl_search}"
     robot.logger.info logmsg
 
@@ -199,7 +215,7 @@ module.exports = (robot) ->
     newdata = []
     fmt = '%-4s %-50s %-15s %s'
     arr.push sprintf fmt, 'Type', 'Value', 'Expiration', 'Creator'
-    for obj in data
+    for obj in fwdata.blacklist
       expires = moment(obj.expires)
       if bl_type and bl_type != obj.type
         newdata.push obj
@@ -214,14 +230,80 @@ module.exports = (robot) ->
 
     # drop deleted records
     deltaN = data.length - newdata.length
-    data = newdata
-    fs.writeFileSync blacklistfile, JSON.stringify(data), 'utf-8'
+    fwdata.blacklist = newdata
+    fs.writeFileSync blacklistfile, JSON.stringify(fwdata), 'utf-8'
 
-    usermsg = "Removed #{deltaN} entries from firewall blacklist.  " +
-      "Change will be applied in < 5 minutes.\n" +
-      "Removed: ```"+ arr.join("\n") + "```"
+    if deltaN > 0
+      usermsg = "Removed #{deltaN} entries from firewall blacklist.  " +
+        "Change will be applied in < 5 minutes.\n" +
+        "Removed: ```"+ arr.join("\n") + "```"
+    else usermsg = "Blacklist delete request did not match any records."
     msg.reply usermsg
 
     logmsg = "#{modulename}: robot responded to #{msg.envelope.user.name}: " +
       "removed #{deltaN} entries from blacklist"
     robot.logger.info logmsg
+
+    for un in fwdata.notify
+      robot.send { room: un }, usermsg unless un == who or deltaN < 1
+
+    return
+
+  robot.respond /fw (?:blacklist|b) (?:notify|n)(?: ([^ ]+))$/i, (msg) ->
+    user = msg.envelope.user
+    who = user.name
+    who = msg.match[1] if msg.match[1]
+
+    logmsg = "#{modulename}: #{user.name} requested: notify #{who}"
+    robot.logger.info logmsg
+
+    fwdata.notify.push who unless who in fwdata.notify
+
+    usermsg = "Added #{who} to firewall blacklist notifications."
+    msg.reply usermsg
+
+    logmsg = "#{modulename}: robot responded to #{user.name}: " +
+      "added #{who} to blacklist notifications"
+    robot.logger.info logmsg
+
+    fs.writeFileSync blacklistfile, JSON.stringify(fwdata), 'utf-8'
+
+    return
+
+  robot.respond /fw (?:blacklist|b) (?:notify|n) (?:list|l)$/i, (msg) ->
+    who = msg.envelope.user.name
+
+    logmsg = "#{modulename}: #{who} requested: notify list"
+    robot.logger.info logmsg
+
+    usermsg = "Notify list: "+ fwdata.notify.join(', ')
+    msg.reply usermsg
+
+    logmsg = "#{modulename}: robot responded to #{who}: " +
+      fwdata.notify.join(', ')
+    robot.logger.info logmsg
+
+    return
+
+  robot.respond /fw (?:blacklist|b) (?:unnotify|un)(?: ([^ ]+))$/i, (msg) ->
+    user = msg.envelope.user
+    who = msg.envelope.user.name
+    who = msg.match[1] if msg.match[1]
+
+    logmsg = "#{modulename}: #{user.name} requested: unnotify #{who}"
+    robot.logger.info logmsg
+
+    n = fwdata.notify.indexOf(who)
+    fwdata.notify.splice(n, 1) if n > -1
+
+    usermsg = "Removed #{who} from firewall blacklist notifications."
+    msg.reply usermsg
+
+    logmsg = "#{modulename}: robot responded to #{user.name}: " +
+      "removed #{who} from blacklist notifications"
+    robot.logger.info logmsg
+
+    fs.writeFileSync blacklistfile, JSON.stringify(fwdata), 'utf-8'
+
+    return
+
