@@ -232,16 +232,15 @@ module.exports = (robot) ->
         continue
       arr.push sprintf fmt, obj.type, obj.val, expires.fromNow(), obj.creator
 
-    # drop deleted records
-    deltaN = fwdata.length - newdata.length
-    fwdata.blacklist = newdata
-    fs.writeFileSync blacklistfile, JSON.stringify(fwdata), 'utf-8'
-
+    deltaN = fwdata.blacklist.length - newdata.length
     if deltaN > 0
       usermsg = "Removed `#{deltaN}` entries from firewall blacklist.  " +
         "Change will be applied in < 5 minutes.\n" +
         "Removed: ```"+ arr.join("\n") + "```"
-    else usermsg = "Blacklist delete request did not match any records."
+      fwdata.blacklist = newdata
+      fs.writeFileSync blacklistfile, JSON.stringify(fwdata), 'utf-8'
+    else
+      usermsg = "Blacklist delete request did not match any records."
     msg.reply usermsg
 
     logmsg = "#{modulename}: robot responded to #{msg.envelope.user.name}: " +
