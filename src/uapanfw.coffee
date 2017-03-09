@@ -212,6 +212,13 @@ module.exports = (robot) ->
     bl_type = msg.match[1]
     bl_search = msg.match[2]
 
+    if bl_search.toLowerCase().indexOf('https://') == 0
+      usermsg = "Blacklisting of https links not supported."
+      return msg.reply usermsg
+
+    if bl_search.toLowerCase().indexOf('http') == 0
+      bl_search = bl_search.replace(/http:\/\//i,'')
+
     logmsg = "#{modulename}: #{who} requested: " +
       "blacklist delete #{bl_type} #{bl_search}"
     robot.logger.info logmsg
@@ -226,7 +233,8 @@ module.exports = (robot) ->
         new_bl.push obj
         continue
       if bl_search and obj.val.indexOf(bl_search) == -1
-        console.log 'search: indexOf['+ bl_search +'] not found in [' + obj.val +']'
+        val = obj.val
+        console.log 'search: indexOf['+ bl_search +'] not found in ['+ val +']'
         new_bl.push obj
         continue
       if expires.isBefore() # now
