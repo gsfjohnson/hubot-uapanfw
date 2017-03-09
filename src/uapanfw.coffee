@@ -229,7 +229,8 @@ module.exports = (robot) ->
     for obj in fwdata.blacklist
       expires = moment(obj.expires)
       if bl_type and bl_type != obj.type
-        console.log 'type: ['+ bl_type +'] != [' + obj.type +']'
+        errfmt = 'type: [%s] != [%s]'
+        console.log sprintf errfmt, bl_type, obj.type
         new_bl.push obj
         continue
       if bl_search and obj.val.indexOf(bl_search) == -1
