@@ -233,8 +233,8 @@ module.exports = (robot) ->
         new_bl.push obj
         continue
       if bl_search and obj.val.indexOf(bl_search) == -1
-        val = String(obj.val)
-        console.log 'search: indexOf['+ bl_search +'] not found in ['+ val +']'
+        errfmt = 'search: indexOf[%s] not found in [%s]'
+        console.log sprintf errfmt, bl_search, obj.val
         new_bl.push obj
         continue
       if expires.isBefore() # now
