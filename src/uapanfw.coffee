@@ -160,8 +160,8 @@ module.exports = (robot) ->
     bl =
       created: moment().format()
       expires: moment().add(1, 'months').format()
-      type: msg.match[1]
-      val: msg.match[2]
+      type: String(msg.match[1])
+      val: String(msg.match[2])
       creator: who
 
     if bl.val.toLowerCase().indexOf('https://') == 0
@@ -209,8 +209,8 @@ module.exports = (robot) ->
     return unless is2fa robot, msg
 
     who = msg.envelope.user.name
-    bl_type = msg.match[1]
-    bl_search = msg.match[2]
+    bl_type = String(msg.match[1])
+    bl_search = String(msg.match[2])
 
     if bl_search.toLowerCase().indexOf('https://') == 0
       usermsg = "Blacklisting of https links not supported."
@@ -233,7 +233,7 @@ module.exports = (robot) ->
         new_bl.push obj
         continue
       if bl_search and obj.val.indexOf(bl_search) == -1
-        val = obj.val
+        val = String(obj.val)
         console.log 'search: indexOf['+ bl_search +'] not found in ['+ val +']'
         new_bl.push obj
         continue
