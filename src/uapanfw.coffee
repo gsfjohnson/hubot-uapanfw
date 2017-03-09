@@ -54,7 +54,7 @@ module.exports = (robot) ->
   robot.router.get "/#{robot.name}/#{modulename}/blacklist/url", (req, res) ->
     clientip = req.connection.remoteAddress || req.socket.remoteAddress ||
       req.connection.socket.remoteAddress
-    logmsg = "#{modulename}: web request from #{clientip}: url blacklist"
+    logmsg = "#{modulename}: web request from #{clientip}: get url blacklist"
     robot.logger.info logmsg
 
     arr = []
@@ -74,7 +74,7 @@ module.exports = (robot) ->
   robot.router.get "/#{robot.name}/#{modulename}/blacklist/cidr", (req, res) ->
     clientip = req.connection.remoteAddress || req.socket.remoteAddress ||
       req.connection.socket.remoteAddress
-    logmsg = "#{modulename}: web request from #{clientip}: cidr blacklist"
+    logmsg = "#{modulename}: web request from #{clientip}: get cidr blacklist"
     robot.logger.info logmsg
 
     arr = []
@@ -92,19 +92,20 @@ module.exports = (robot) ->
 
     return
 
-  robot.respond /fw(?: help|)$/, (msg) ->
+  robot.respond /fw(?: help| h|)$/, (msg) ->
     cmds = ['```']
     arr = [
-      modulename + " blacklist - show blacklist"
-      modulename + " blacklist add (url|cidr) <url|cidr> - add to blacklist"
-      modulename + " blacklist del (url|cidr) <url|cidr> - del from blacklist"
+      modulename + " blacklist [(cidr|url) [searchterm]] - show blacklist"
+      modulename + " blacklist add (url|cidr) <weburl.tld/etc|x.x.x.x> - add to blacklist"
+      modulename + " blacklist del (url|cidr) <weburl.tld/etc|x.x.x.x> - del from blacklist"
       modulename + " blacklist notify [username] - notify when changes happen"
       modulename + " blacklist subscribers - list notify subscribers"
     ]
 
     for str in arr
-      cmd = str.split " - "
-      cmds.push "#{cmd[0]} - #{cmd[1]}"
+      #cmd = str.split " - "
+      #cmds.push "#{cmd[0]} - #{cmd[1]}"
+      cmds.push str
     cmds.push '```'
 
     msg.reply cmds.join "\n"
@@ -116,7 +117,7 @@ module.exports = (robot) ->
     return
 
   robot.respond /fw (?:blacklist|b)(?: (cidr|url)(?: ([^ ]+)|)|)$/i, (msg) ->
-    logmsg = "#{modulename}: #{msg.envelope.user.name} requested: blacklist"
+    logmsg = "#{modulename}: #{msg.envelope.user.name} requested: show blacklist"
     robot.logger.info logmsg
 
     bl_type = false
@@ -215,28 +216,32 @@ module.exports = (robot) ->
       "blacklist delete #{bl_type} #{bl_search}"
     robot.logger.info logmsg
 
-    arr = []
-    newdata = []
-    arr.push sprintf displayfmt, 'Type', 'Value', 'Expiration', 'Creator'
+    deleted = []
+    new_bl = []
+    deleted.push sprintf displayfmt, 'Type', 'Value', 'Expiration', 'Creator'
     for obj in fwdata.blacklist
       expires = moment(obj.expires)
       if bl_type and bl_type != obj.type
-        newdata.push obj
+        console.log 'type: ['+ bl_type +'] != [' + obj.type +']'
+        new_bl.push obj
         continue
       if bl_search and obj.val.indexOf(bl_search) == -1
-        newdata.push obj
+        console.log 'search: indexOf['+ bl_search +'] not found in [' + obj.val +']'
+        new_bl.push obj
         continue
       if expires.isBefore() # now
-        newdata.push obj
+        console.log 'expires: ['+ expires +'] is before now'
+        new_bl.push obj
         continue
-      arr.push sprintf displayfmt, obj.type, obj.val, expires.fromNow(), obj.creator
+      deleted.push sprintf displayfmt, obj.type, obj.val,
+        expires.fromNow(), obj.creator
 
-    deltaN = fwdata.blacklist.length - newdata.length
+    deltaN = fwdata.blacklist.length - new_bl.length
     if deltaN > 0
       usermsg = "Removed `#{deltaN}` entries from firewall blacklist.  " +
         "Change will be applied in < 5 minutes. Removed: " +
-        "```"+ arr.join("\n") + "```"
-      fwdata.blacklist = newdata
+        "```"+ deleted.join("\n") + "```"
+      fwdata.blacklist = new_bl
       fs.writeFileSync blacklistfile, JSON.stringify(fwdata), 'utf-8'
     else
       usermsg = "Blacklist delete request did not match any records."
