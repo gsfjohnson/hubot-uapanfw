@@ -191,8 +191,8 @@ module.exports = (robot) ->
     fwdata.blacklist.push bl
     fs.writeFileSync blacklistfile, JSON.stringify(fwdata), 'utf-8'
 
-    usermsg = "Added `#{bl.val}` to firewall blacklist, " +
-      "expiring `#{bl.expires}`.  Change will be applied in < 5 minutes."
+    usermsg = "You added `#{bl.val}` to firewall blacklist. " +
+      "Expires `#{bl.expires}`.  Change will be applied in < 5 minutes."
     msg.reply usermsg
 
     logmsg = "#{modulename}: robot responded to #{who}: " +
@@ -200,6 +200,8 @@ module.exports = (robot) ->
     robot.logger.info logmsg
 
     for un in fwdata.notify
+      usermsg = usermsg.replace /^You/, un
+      usermsg = usermsg.replace /  Change will be applied in < 5 minutes./, ''
       robot.send { room: un }, usermsg unless un == who
 
     return
@@ -247,7 +249,7 @@ module.exports = (robot) ->
 
     deltaN = fwdata.blacklist.length - new_bl.length
     if deltaN > 0
-      usermsg = "Removed `#{deltaN}` entries from firewall blacklist.  " +
+      usermsg = "You removed `#{deltaN}` fw blacklist entries.  " +
         "Change will be applied in < 5 minutes. Removed: " +
         "```"+ deleted.join("\n") + "```"
       fwdata.blacklist = new_bl
@@ -261,6 +263,8 @@ module.exports = (robot) ->
     robot.logger.info logmsg
 
     for un in fwdata.notify
+      usermsg = usermsg.replace /^You/, un
+      usermsg = usermsg.replace /  Change will be applied in < 5 minutes./, ''
       robot.send { room: un }, usermsg unless un == who or deltaN < 1
 
     return
