@@ -200,8 +200,8 @@ module.exports = (robot) ->
     robot.logger.info logmsg
 
     for un in fwdata.notify
-      usermsg = usermsg.replace /^You/, un
-      usermsg = usermsg.replace /  Change will be applied in < 5 minutes./, ''
+      usermsg = usermsg.replace(/^You/, un)
+      #usermsg = usermsg.replace(/  Change will be applied in \< 5 minutes\./, '')
       robot.send { room: un }, usermsg unless un == who
 
     return
@@ -263,8 +263,8 @@ module.exports = (robot) ->
     robot.logger.info logmsg
 
     for un in fwdata.notify
-      usermsg = usermsg.replace /^You/, un
-      usermsg = usermsg.replace /  Change will be applied in < 5 minutes./, ''
+      usermsg = usermsg.replace(/^You/,un)
+      #usermsg = usermsg.replace(/  Change will be applied in \< 5 minutes\./, '')
       robot.send { room: un }, usermsg unless un == who or deltaN < 1
 
     return
