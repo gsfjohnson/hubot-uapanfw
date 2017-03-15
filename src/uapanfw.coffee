@@ -23,20 +23,58 @@ sprintf = require("sprintf-js").sprintf
 modulename = 'fw'
 blacklistfile = modulename + ".json"
 displayfmt = '%-4s %-50s %-15s %s'
+svcQueueIntervalMs = 300 * 1000
 
-isAuthorized = (robot, msg) ->
+robotRef = false
+
+isAuthorized = (msg) ->
+  console.error 'bad robotRef' unless robotRef
   u = msg.envelope.user
-  return true if robot.auth.hasRole(u,'fw')
+  return true if robotRef.auth.hasRole(u,'fw')
   msg.reply "Not authorized.  Missing fw role."
   return false
 
-is2fa = (robot, msg) ->
+is2fa = (msg) ->
+  console.error 'bad robotRef' unless robotRef
   u = msg.envelope.user
-  return true if robot.auth.is2fa(u)
+  return true if robotRef.auth.is2fa(u)
   msg.reply "2fa required.  Use `auth 2fa` to validate identity."
   return false
 
+expirationWorker = ->
+  bl = fwdata.blacklist
+  removequeue = []
+  deleted = [
+    sprintf displayfmt, 'Type', 'Value', 'Expiration', 'Creator'
+  ]
+  for obj in fwdata.blacklist when moment(obj.expires).isAfter()
+    deleted.push sprintf displayfmt, obj.type, obj.val, expires.fromNow(),
+      obj.creator
+    removequeue.push obj
+
+  while removequeue.length > 0
+    obj = removequeue.shift()
+    bl.splice(bl.indexOf(obj), 1)
+
+  msg = "fw: blacklist entries expired and have been removed. " +
+    "Change will be applied in < 5 minutes. Removed: " +
+    "```"+ deleted.join("\n") + "```"
+  notifySubscribers msg
+
+  fs.writeFileSync blacklistfile, JSON.stringify(fwdata), 'utf-8'
+
+  setTimeout expirationWorker, svcQueueIntervalMs
+
+notifySubscribers = (msg, current_un = false) ->
+  console.error 'bad robotRef' unless robotRef
+  for un in fwdata.notify
+    robotRef.send { room: un }, msg unless current_un && un == current_un
+
+
 module.exports = (robot) ->
+
+  robotRef = robot
+  setTimeout expirationWorker, svcQueueIntervalMs
 
   fwdata =
     notify: []
@@ -152,8 +190,8 @@ module.exports = (robot) ->
     return
 
   robot.respond /fw (?:blacklist|b) add (url|cidr) ([^ ]+)(?: ([^ ]+)|)$/i, (msg) ->
-    return unless isAuthorized robot, msg
-    return unless is2fa robot, msg
+    return unless isAuthorized msg
+    return unless is2fa msg
 
     who = msg.envelope.user.name
 
@@ -199,16 +237,15 @@ module.exports = (robot) ->
       "added entry to blacklist"
     robot.logger.info logmsg
 
-    for un in fwdata.notify
-      usermsg = usermsg.replace(/^You/, un)
-      #usermsg = usermsg.replace(/  Change will be applied in \< 5 minutes\./, '')
-      robot.send { room: un }, usermsg unless un == who
+    usermsg = usermsg.replace(/^You/, un)
+    #usermsg = usermsg.replace(/  Change will be applied in \< 5 minutes\./, '')
+    notifySubscribers usermsg, who
 
     return
 
   robot.respond /fw (?:blacklist|b) (?:delete|del|d) (url|cidr) ([^ ]+)$/i, (msg) ->
-    return unless isAuthorized robot, msg
-    return unless is2fa robot, msg
+    return unless isAuthorized msg
+    return unless is2fa msg
 
     who = msg.envelope.user.name
     bl_type = String(msg.match[1])
@@ -232,16 +269,16 @@ module.exports = (robot) ->
       expires = moment(obj.expires)
       if bl_type and bl_type != obj.type
         errfmt = 'type: [%s] != [%s]'
-        console.log sprintf errfmt, bl_type, obj.type
+        #console.log sprintf errfmt, bl_type, obj.type
         new_bl.push obj
         continue
       if bl_search and obj.val.indexOf(bl_search) == -1
         errfmt = 'search: indexOf[%s] not found in [%s]'
-        console.log sprintf errfmt, bl_search, obj.val
+        #console.log sprintf errfmt, bl_search, obj.val
         new_bl.push obj
         continue
       if expires.isBefore() # now
-        console.log 'expires: ['+ expires +'] is before now'
+        #console.log 'expires: ['+ expires +'] is before now'
         new_bl.push obj
         continue
       deleted.push sprintf displayfmt, obj.type, obj.val,
@@ -262,10 +299,10 @@ module.exports = (robot) ->
       "removed #{deltaN} entries from blacklist"
     robot.logger.info logmsg
 
-    for un in fwdata.notify
+    if deltaN > 0
       usermsg = usermsg.replace(/^You/,un)
       #usermsg = usermsg.replace(/  Change will be applied in \< 5 minutes\./, '')
-      robot.send { room: un }, usermsg unless un == who or deltaN < 1
+      notifySubscribers usermsg, who
 
     return
 
