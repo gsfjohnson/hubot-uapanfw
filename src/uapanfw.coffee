@@ -229,7 +229,7 @@ module.exports = (robot) ->
     fwdata.blacklist.push bl
     fs.writeFileSync blacklistfile, JSON.stringify(fwdata), 'utf-8'
 
-    usermsg = "You added `#{bl.val}` to firewall blacklist. " +
+    usermsg = "#{who} added `#{bl.val}` to firewall blacklist. " +
       "Expires `#{bl.expires}`.  Change will be applied in < 5 minutes."
     msg.reply usermsg
 
@@ -237,7 +237,6 @@ module.exports = (robot) ->
       "added entry to blacklist"
     robot.logger.info logmsg
 
-    usermsg = usermsg.replace(/^You/, un)
     #usermsg = usermsg.replace(/  Change will be applied in \< 5 minutes\./, '')
     notifySubscribers usermsg, who
 
@@ -286,7 +285,7 @@ module.exports = (robot) ->
 
     deltaN = fwdata.blacklist.length - new_bl.length
     if deltaN > 0
-      usermsg = "You removed `#{deltaN}` fw blacklist entries.  " +
+      usermsg = "#{who} removed `#{deltaN}` fw blacklist entries.  " +
         "Change will be applied in < 5 minutes. Removed: " +
         "```"+ deleted.join("\n") + "```"
       fwdata.blacklist = new_bl
@@ -300,7 +299,6 @@ module.exports = (robot) ->
     robot.logger.info logmsg
 
     if deltaN > 0
-      usermsg = usermsg.replace(/^You/,un)
       #usermsg = usermsg.replace(/  Change will be applied in \< 5 minutes\./, '')
       notifySubscribers usermsg, who
 
