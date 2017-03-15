@@ -26,6 +26,9 @@ displayfmt = '%-4s %-50s %-15s %s'
 svcQueueIntervalMs = 300 * 1000
 
 robotRef = false
+fwdata =
+  notify: []
+  blacklist: []
 
 isAuthorized = (msg) ->
   console.error 'bad robotRef' unless robotRef
@@ -47,21 +50,20 @@ expirationWorker = ->
   deleted = [
     sprintf displayfmt, 'Type', 'Value', 'Expiration', 'Creator'
   ]
-  for obj in fwdata.blacklist when moment(obj.expires).isAfter()
-    deleted.push sprintf displayfmt, obj.type, obj.val, expires.fromNow(),
-      obj.creator
+  for obj in fwdata.blacklist when moment(obj.expires).valueOf() < Date.now()
+    deleted.push sprintf displayfmt, obj.type, obj.val,
+      moment(obj.expires).fromNow(), obj.creator
     removequeue.push obj
 
-  while removequeue.length > 0
-    obj = removequeue.shift()
-    bl.splice(bl.indexOf(obj), 1)
-
-  msg = "fw: blacklist entries expired and have been removed. " +
-    "Change will be applied in < 5 minutes. Removed: " +
-    "```"+ deleted.join("\n") + "```"
-  notifySubscribers msg
-
-  fs.writeFileSync blacklistfile, JSON.stringify(fwdata), 'utf-8'
+  if removequeue.length > 0
+    while removequeue.length > 0
+      obj = removequeue.shift()
+      bl.splice(bl.indexOf(obj), 1)
+    msg = "fw: blacklist entries expired and have been removed. " +
+      "Change will be applied in < 5 minutes. Removed: " +
+      "```"+ deleted.join("\n") + "```"
+    notifySubscribers msg
+    fs.writeFileSync blacklistfile, JSON.stringify(fwdata), 'utf-8'
 
   setTimeout expirationWorker, svcQueueIntervalMs
 
@@ -76,16 +78,8 @@ module.exports = (robot) ->
   robotRef = robot
   setTimeout expirationWorker, svcQueueIntervalMs
 
-  fwdata =
-    notify: []
-    blacklist: []
   try
     fwdata = JSON.parse fs.readFileSync blacklistfile, 'utf-8'
-    if Array.isArray(fwdata)
-      fwdata =
-        notify: []
-        blacklist: fwdata
-    #robot.logger.info "#{modulename} data loaded"
   catch error
     console.log('Unable to read file', error) unless error.code is 'ENOENT'
 
