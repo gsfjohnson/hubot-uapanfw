@@ -42,6 +42,11 @@ fwnames =
   '10.9.192.252': 'Juneau-1'
   '10.9.192.253': 'Juneau-2'
 
+if process.env.HUBOT_AUTH_ADMIN
+  admins = process.env.HUBOT_AUTH_ADMIN.split ','
+else
+  console.warn "#{modulename}: HUBOT_AUTH_ADMIN environment variable not set."
+
 # borrowed from
 # http://stackoverflow.com/questions/9796764/how-do-i-sort-an-array-with-coffeescript
 sortBy = (key, a, b, r) ->
@@ -100,6 +105,26 @@ notifySubscribers = (msg, current_un = false) ->
     robotRef.send { room: un }, msg unless current_un && un == current_un
 
 
+notifyAdmins = (msg, current_un = false) ->
+  console.error 'bad robotRef' unless robotRef
+  for un in admins
+    robotRef.send { room: un }, msg unless current_un && un == current_un
+
+
+showAdmins = (robot, msg) ->
+  fullcmd = String(msg.match.shift())
+  who = msg.envelope.user.name
+
+  logmsg = "#{modulename}: #{who} requested: #{fullcmd}"
+  robot.logger.info logmsg
+
+  msg.reply "#{modulename} admins: #{admins.join(', ')}"
+
+  logmsg = "#{modulename}: robot responded to #{who}: " +
+    "provided list of admins"
+  robot.logger.info logmsg
+
+
 addListEntry = (robot, msg) ->
   fullcmd = String(msg.match.shift())
   who = msg.envelope.user.name
@@ -122,10 +147,10 @@ addListEntry = (robot, msg) ->
     # safety check !!
     if entry.val.match /^(?:137\.229\.|199\.165\.|10\.|192\.168\.|172\.[123])/
       usermsg = "Blocking UA CIDRs is not allowed. #{safety_fail_note}"
-      logmsg = "#{modulename}: Request by #{who} failed safety check: #{fullcmd}"
+      logmsg = "#{modulename}: #{who} request failed safety check: #{fullcmd}"
       robot.logger.info logmsg
-      notifySubscribers "#{logmsg}\nReason: #{usermsg}"
-      #msg.reply usermsg
+      msg.reply usermsg
+      notifyAdmins "#{logmsg}\nReason: #{usermsg}"
       return
 
   else if extra = l_val.match /^([a-zA-Z][a-zA-Z0-9\.]+)$/
@@ -135,10 +160,10 @@ addListEntry = (robot, msg) ->
     # safety check !!
     if entry.val.toLowerCase().match /(?:alaska|uaf)\.edu$/
       usermsg = "Blocking UA domains is not allowed. #{safety_fail_note}"
-      logmsg = "#{modulename}: Request by #{who} failed safety check: #{fullcmd}"
+      logmsg = "#{modulename}: #{who} request failed safety check: #{fullcmd}"
       robot.logger.info logmsg
-      notifySubscribers "#{logmsg}\nReason: #{usermsg}"
-      #msg.reply usermsg
+      msg.reply usermsg
+      notifyAdmins "#{logmsg}\nReason: #{usermsg}"
       return
 
   else
@@ -152,12 +177,11 @@ addListEntry = (robot, msg) ->
 
     # safety check !!
     if entry.val.toLowerCase().match /[^\/]+(?:alaska|uaf)\.edu/
-      usermsg = "Blocking UA domains is not allowed. #{safety_fail_note}"
-      logmsg = "#{modulename}: Request by #{who} failed safety check: #{fullcmd}"
+      usermsg = "Blocking UA urls is not allowed. #{safety_fail_note}"
+      logmsg = "#{modulename}: #{who} request failed safety check: #{fullcmd}"
       robot.logger.info logmsg
-      notifySubscribers "#{logmsg}\nReason: #{usermsg}"
-      #msg.reply usermsg
-
+      msg.reply usermsg
+      notifyAdmins "#{logmsg}\nReason: #{usermsg}"
       return
 
   #console.log "#{l_val}: #{entry.type} => #{entry.val}"
@@ -459,7 +483,10 @@ module.exports = (robot) ->
 
     return
 
-  robot.respond /(?:firewall|fw) show (?:checkins)$/i, (msg) ->
+  robot.respond /(?:firewall|fw) show (?:admins|a)$/i, (msg) ->
+    return showAdmins robot, msg
+
+  robot.respond /(?:firewall|fw) show (?:checkins|firewalls|fw|f)$/i, (msg) ->
     return showCheckins robot, msg
 
   robot.respond /(?:firewall|fw) show (?:subscribers|s)$/i, (msg) ->
