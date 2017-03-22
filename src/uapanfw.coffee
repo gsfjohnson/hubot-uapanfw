@@ -120,8 +120,8 @@ addListEntry = (robot, msg) ->
     entry.val = extra[1]
 
     # safety check !!
-    if entry.val.match /^(?:137\.229\.|199\.165\.)/
-      usermsg = "Blocking CIDRs begining with 137.229. or 199.165. is not allowed. #{safety_fail_note}"
+    if entry.val.match /^(?:137\.229\.|199\.165\.|10\.|192\.168\.|172\.[123])/
+      usermsg = "Blocking UA CIDRs is not allowed. #{safety_fail_note}"
       logmsg = "#{modulename}: Request by #{who} failed safety check: #{fullcmd}"
       robot.logger.info logmsg
       notifySubscribers "#{logmsg}\nReason: #{usermsg}"
@@ -134,7 +134,7 @@ addListEntry = (robot, msg) ->
 
     # safety check !!
     if entry.val.toLowerCase().match /(?:alaska|uaf)\.edu$/
-      usermsg = "Blocking alaska.edu or uaf.edu is not allowed. #{safety_fail_note}"
+      usermsg = "Blocking UA domains is not allowed. #{safety_fail_note}"
       logmsg = "#{modulename}: Request by #{who} failed safety check: #{fullcmd}"
       robot.logger.info logmsg
       notifySubscribers "#{logmsg}\nReason: #{usermsg}"
@@ -152,7 +152,7 @@ addListEntry = (robot, msg) ->
 
     # safety check !!
     if entry.val.toLowerCase().match /[^\/]+(?:alaska|uaf)\.edu/
-      usermsg = "Blocking alaska.edu or uaf.edu is not allowed. #{safety_fail_note}"
+      usermsg = "Blocking UA domains is not allowed. #{safety_fail_note}"
       logmsg = "#{modulename}: Request by #{who} failed safety check: #{fullcmd}"
       robot.logger.info logmsg
       notifySubscribers "#{logmsg}\nReason: #{usermsg}"
