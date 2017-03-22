@@ -21,7 +21,7 @@ moment = require 'moment'
 sprintf = require("sprintf-js").sprintf
 
 modulename = 'fw'
-blacklistfile = modulename + ".json"
+fwdata_file = modulename + ".json"
 displayfmt = '%-4s %-50s %-15s %s'
 timefmt = 'YYYY-MM-DD HH:mm:ss ZZ'
 svcQueueIntervalMs = 300 * 1000
@@ -31,6 +31,22 @@ fwdata =
   notify: []
   blacklist: []
   whitelist: []
+  firewalls: []
+
+fwnames =
+  '10.9.0.252': 'Fairbanks-1'
+  '10.9.0.253': 'Fairbanks-2'
+  '10.9.128.252': 'Anchorage-1'
+  '10.9.128.253': 'Anchorage-2'
+  '10.9.192.252': 'Juneau-1'
+  '10.9.192.253': 'Juneau-2'
+
+sortBy = (key, a, b, r) ->
+  r = if r then 1 else -1
+  return -1*r if a[key] > b[key]
+  return +1*r if a[key] < b[key]
+  return 0
+
 
 isAuthorized = (msg) ->
   console.error 'bad robotRef' unless robotRef
@@ -72,7 +88,7 @@ expireEntriesFromList = (list_name) ->
       "Change will be applied in < 5 minutes. Removed: " +
       "```"+ deleted.join("\n") + "```"
     notifySubscribers msg
-    fs.writeFileSync blacklistfile, JSON.stringify(fwdata), 'utf-8'
+    fs.writeFileSync fwdata_file, JSON.stringify(fwdata), 'utf-8'
 
 notifySubscribers = (msg, current_un = false) ->
   console.error 'bad robotRef' unless robotRef
@@ -80,28 +96,60 @@ notifySubscribers = (msg, current_un = false) ->
     robotRef.send { room: un }, msg unless current_un && un == current_un
 
 addListEntry = (robot, msg) ->
+  fullcmd = String(msg.match.shift())
   who = msg.envelope.user.name
-
-  list_name = String(msg.match[1])
-  list_name = 'whitelist' if list_name.indexOf('w') == 0
-  list_name = 'blacklist' if list_name.indexOf('b') == 0
 
   entry =
     creator: who
     created: moment().format()
     expires: moment().add(1, 'months').format()
-    type: String(msg.match[2])
-    val: String(msg.match[3])
 
-  if entry.val.toLowerCase().indexOf('https://') == 0
-    usermsg = "#{list_name}ing of https links not supported."
-    return msg.reply usermsg
+  list_name = String(msg.match.shift())
+  list_name = 'whitelist' if list_name.indexOf('w') == 0
+  list_name = 'blacklist' if list_name.indexOf('b') == 0
+  #console.log list_name
 
-  if entry.val.toLowerCase().indexOf('http') == 0
-    entry.val = entry.val.replace(/http:\/\//i,'')
+  l_val = String(msg.match.shift())
+  if extra = l_val.match /^(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(?:\/\d{1,2}|))$/
+    entry.type = 'cidr'
+    entry.val = extra[1]
 
-  if msg.match[4]?
-    expires = String(msg.match[4])
+    # safety check !!
+    if entry.val.match /^(?:137\.229\.|199\.165\.)/
+      usermsg = "Blocking CIDRs begining with 137.229. or 199.165. not allowed. "+
+        " If this is time critical ask a human for help; otherwise open a ticket."
+      return msg.reply usermsg
+
+  else if extra = l_val.match /^([a-zA-Z][a-zA-Z0-9\.]+)$/
+    entry.type = 'domain'
+    entry.val = extra[1]
+
+    # safety check !!
+    if entry.val.toLowerCase().match /(?:alaska|uaf)\.edu$/
+      usermsg = "Blocking alaska.edu or uaf.edu not allowed. "+
+        " If this is time critical ask a human for help; otherwise open a ticket."
+      return msg.reply usermsg
+
+  else
+    entry.type = 'url'
+    entry.val = l_val
+    if entry.val.toLowerCase().indexOf('https://') == 0
+      usermsg = "#{list_name}ing of https links not supported."
+      return msg.reply usermsg
+    if entry.val.toLowerCase().indexOf('http://') == 0
+      entry.val = entry.val.replace(/http:\/\//i,'')
+
+    # safety check !!
+    if entry.val.toLowerCase().match /[^\/]+(?:alaska|uaf)\.edu/
+      usermsg = "Blocking alaska.edu or uaf.edu not allowed. "+
+        " If this is time critical ask a human for help; otherwise open a ticket."
+      return msg.reply usermsg
+
+  #console.log "#{l_val}: #{entry.type} => #{entry.val}"
+
+  expires = String(msg.match.shift())
+  if expires isnt 'undefined'
+    #console.log "processing expiration: #{expires}"
     extra = expires.match /\+(\d)([hdwMQy])/
     if extra?
       n = extra[1]
@@ -118,7 +166,7 @@ addListEntry = (robot, msg) ->
   robot.logger.info logmsg
 
   fwdata[list_name].push entry
-  fs.writeFileSync blacklistfile, JSON.stringify(fwdata), 'utf-8'
+  fs.writeFileSync fwdata_file, JSON.stringify(fwdata), 'utf-8'
 
   usermsg = "#{who} added `#{entry.val}` to firewall #{list_name}. " +
     "Expires `#{entry.expires}`.  Change will be applied in < 5 minutes."
@@ -133,24 +181,26 @@ addListEntry = (robot, msg) ->
 
 
 deleteListEntry = (robot, msg) ->
+  fullcmd = String(msg.match.shift())
   who = msg.envelope.user.name
 
-  list_name = String(msg.match[1])
+  list_name = String(msg.match.shift())
   list_name = 'whitelist' if list_name.indexOf('w') == 0
   list_name = 'blacklist' if list_name.indexOf('b') == 0
 
-  l_type = String(msg.match[2])
-  l_search = String(msg.match[3])
+  #l_type = String(msg.match.shift())
+  l_type = false
+  l_search = String(msg.match.shift())
 
   if l_search.toLowerCase().indexOf('https://') == 0
     usermsg = "#{list_name}ing of https links not supported."
     return msg.reply usermsg
 
-  if l_search.toLowerCase().indexOf('http') == 0
+  if l_search.toLowerCase().indexOf('http://') == 0
     l_search = l_search.replace(/http:\/\//i,'')
 
   logmsg = "#{modulename}: #{who} requested: " +
-    "#{list_name} delete #{l_type} #{l_search}"
+    "#{list_name} delete #{l_type ? l_type : ''} #{l_search}"
   robot.logger.info logmsg
 
   deleted = []
@@ -181,7 +231,7 @@ deleteListEntry = (robot, msg) ->
       "Change will be applied in < 5 minutes. Removed: " +
       "```"+ deleted.join("\n") + "```"
     fwdata[list_name] = new_entry
-    fs.writeFileSync blacklistfile, JSON.stringify(fwdata), 'utf-8'
+    fs.writeFileSync fwdata_file, JSON.stringify(fwdata), 'utf-8'
   else
     usermsg = "#{list_name} delete request did not match any records."
   msg.reply usermsg
@@ -201,10 +251,9 @@ showList = (robot, msg) ->
   list_name = 'blacklist' if list_name.indexOf('b') == 0
 
   l_type = false
-  l_type = msg.match[2] if msg.match[2]
-
   l_search = false
-  l_search = msg.match[3] if msg.match[3]
+  if msg.match[2]?
+    l_search = String(msg.match[2])
 
   logmsg = "#{modulename}: #{msg.envelope.user.name} requested: show #{list_name}"
   robot.logger.info logmsg
@@ -250,7 +299,7 @@ subscribe = (robot, msg) ->
     "added #{who} to firewall change notifications"
   robot.logger.info logmsg
 
-  fs.writeFileSync blacklistfile, JSON.stringify(fwdata), 'utf-8'
+  fs.writeFileSync fwdata_file, JSON.stringify(fwdata), 'utf-8'
 
 
 unsubscribe = (robot, msg) ->
@@ -271,7 +320,7 @@ unsubscribe = (robot, msg) ->
     "removed #{who} from firewall change notifications"
   robot.logger.info logmsg
 
-  fs.writeFileSync blacklistfile, JSON.stringify(fwdata), 'utf-8'
+  fs.writeFileSync fwdata_file, JSON.stringify(fwdata), 'utf-8'
 
 
 showSubscribers = (robot, msg) ->
@@ -287,9 +336,13 @@ showSubscribers = (robot, msg) ->
     fwdata.notify.join(', ')
   robot.logger.info logmsg
 
+
 httpGetList = (robot, req, res, list_name, l_type) ->
   clientip = req.connection.remoteAddress || req.socket.remoteAddress ||
     req.connection.socket.remoteAddress
+
+  rememberCheckin clientip, list_name, l_type
+
   logmsg = "#{modulename}: web request from #{clientip}: get #{l_type} #{list_name}"
   robot.logger.info logmsg
 
@@ -306,13 +359,51 @@ httpGetList = (robot, req, res, list_name, l_type) ->
   robot.logger.info logmsg
 
 
+showCheckins = (robot, msg) ->
+  who = msg.envelope.user.name
+
+  logmsg = "#{modulename}: #{who} requested: checkins"
+  robot.logger.info logmsg
+
+  arr = []
+  for obj in fwdata.firewalls
+    obj.checkin = moment(obj.checkin) if typeof(obj.checkin) is 'string'
+    arr.push sprintf '%-18s %-10s %-8s %-15s', obj.name, obj.list, obj.type,
+      obj.checkin.fromNow()
+  usermsg = "Expect firewall check times: ```"+ arr.join("\n") + "```"
+  msg.reply usermsg
+
+  logmsg = "#{modulename}: robot responded to #{who}: checkins"
+  robot.logger.info logmsg
+
+
+rememberCheckin = (clientip,list_name,l_type) ->
+  return unless fwname = fwnames[clientip] # skip non-firewalls
+  for obj in fwdata.firewalls
+    if obj.ip is clientip and obj.type is l_type and obj.list is list_name
+      obj.checkin = moment().add(5,'minutes')
+      fs.writeFileSync fwdata_file, JSON.stringify(fwdata), 'utf-8'
+      return
+  # otherwise create new object
+  obj =
+    ip: clientip
+    name: fwname
+    list: list_name
+    type: l_type
+    checkin: moment().add(5,'minutes')
+  fwdata.firewalls.push obj
+  if fwdata.firewalls.length > 1
+    fwdata.firewalls = fwdata.firewalls.sort (a,b) ->
+      sortBy('name',a,b) or sortBy('list',a,b) or sortBy('type',a,b)
+  fs.writeFileSync fwdata_file, JSON.stringify(fwdata), 'utf-8'
+
 module.exports = (robot) ->
 
   robotRef = robot
   setTimeout expirationWorker, svcQueueIntervalMs
 
   try
-    fwdata = JSON.parse fs.readFileSync blacklistfile, 'utf-8'
+    fwdata = JSON.parse fs.readFileSync fwdata_file, 'utf-8'
   catch error
     console.log('Unable to read file', error) unless error.code is 'ENOENT'
 
@@ -331,9 +422,9 @@ module.exports = (robot) ->
   robot.respond /(?:firewall|fw)(?: help| h|)$/, (msg) ->
     cmds = ['```']
     arr = [
-      modulename + " show (white|black)list [(cidr|url) [searchterm]]"
-      modulename + " add (white|black)list (url|cidr) <weburl.tld/etc|x.x.x.x>"
-      modulename + " del (white|black)list (url|cidr) <weburl.tld/etc|x.x.x.x>"
+      modulename + " show (white|black)list [searchterm]"
+      modulename + " add (white|black)list <weburl.tld/etc|x.x.x.x>"
+      modulename + " del (white|black)list <weburl.tld/etc|x.x.x.x>"
       modulename + " subscribe [username] - subscribe to change notifications"
       modulename + " unsubscribe [username]"
       modulename + " show subscribers"
@@ -353,10 +444,16 @@ module.exports = (robot) ->
 
     return
 
-  robot.respond /(?:firewall|fw) show (whitelist|wl|w|blacklist|bl|b)(?: (cidr|url)(?: ([^ ]+)|)|)$/i, (msg) ->
+  robot.respond /(?:firewall|fw) show (?:checkins)$/i, (msg) ->
+    return showCheckins robot, msg
+
+  robot.respond /(?:firewall|fw) show (?:subscribers|s)$/i, (msg) ->
+    return showSubscribers robot, msg
+
+  robot.respond /(?:firewall|fw) show (whitelist|wl|w|blacklist|bl|b)(?: (.+)|)$/i, (msg) ->
     return showList robot, msg
 
-  robot.respond /(?:firewall|fw) add (whitelist|wl|w|blacklist|bl|b) (url|cidr) ([^ ]+)(?: ([^ ]+)|)$/i, (msg) ->
+  robot.respond /(?:firewall|fw) add (whitelist|wl|w|blacklist|bl|b) ([^ ]+)(?: ([^ ]+)|)$/i, (msg) ->
     return unless isAuthorized msg
     return unless is2fa msg
 
@@ -370,9 +467,6 @@ module.exports = (robot) ->
 
   robot.respond /(?:firewall|fw) (?:subscribe|sub)(?: ([^ ]+))$/i, (msg) ->
     return subscribe robot, msg
-
-  robot.respond /(?:firewall|fw) show (?:subscribers|s)$/i, (msg) ->
-    return showSubscribers robot, msg
 
   robot.respond /(?:firewall|fw) (?:unsubscribe|unsub)(?: ([^ ]+))$/i, (msg) ->
     return unsubscribe robot, msg
