@@ -22,6 +22,7 @@ sprintf = require("sprintf-js").sprintf
 
 modulename = 'fw'
 fwdata_file = modulename + ".json"
+safety_fail_note = 'If this is time critical ask a human; otherwise please open a ticket.'
 displayfmt = '%-4s %-50s %-15s %s'
 timefmt = 'YYYY-MM-DD HH:mm:ss ZZ'
 svcQueueIntervalMs = 300 * 1000
@@ -41,6 +42,8 @@ fwnames =
   '10.9.192.252': 'Juneau-1'
   '10.9.192.253': 'Juneau-2'
 
+# borrowed from
+# http://stackoverflow.com/questions/9796764/how-do-i-sort-an-array-with-coffeescript
 sortBy = (key, a, b, r) ->
   r = if r then 1 else -1
   return -1*r if a[key] > b[key]
@@ -118,10 +121,12 @@ addListEntry = (robot, msg) ->
 
     # safety check !!
     if entry.val.match /^(?:137\.229\.|199\.165\.)/
-      usermsg = "Blocking CIDRs begining with 137.229. or 199.165. not allowed. "+
-        " If this is time critical ask a human for help; otherwise open a ticket."
-      notifySubscribers "Request by #{who} failed safety check: #{fullcmd}\nReason: #{usermsg}"
-      return msg.reply usermsg
+      usermsg = "Blocking CIDRs begining with 137.229. or 199.165. is not allowed. #{safety_fail_note}"
+      logmsg = "#{modulename}: Request by #{who} failed safety check: #{fullcmd}"
+      robot.logger.info logmsg
+      notifySubscribers "#{logmsg}\nReason: #{usermsg}"
+      #msg.reply usermsg
+      return
 
   else if extra = l_val.match /^([a-zA-Z][a-zA-Z0-9\.]+)$/
     entry.type = 'domain'
@@ -129,10 +134,12 @@ addListEntry = (robot, msg) ->
 
     # safety check !!
     if entry.val.toLowerCase().match /(?:alaska|uaf)\.edu$/
-      usermsg = "Blocking alaska.edu or uaf.edu not allowed. "+
-        " If this is time critical ask a human for help; otherwise open a ticket."
-      notifySubscribers "Request by #{who} failed safety check: #{fullcmd}\nReason: #{usermsg}"
-      return msg.reply usermsg
+      usermsg = "Blocking alaska.edu or uaf.edu is not allowed. #{safety_fail_note}"
+      logmsg = "#{modulename}: Request by #{who} failed safety check: #{fullcmd}"
+      robot.logger.info logmsg
+      notifySubscribers "#{logmsg}\nReason: #{usermsg}"
+      #msg.reply usermsg
+      return
 
   else
     entry.type = 'url'
@@ -145,10 +152,13 @@ addListEntry = (robot, msg) ->
 
     # safety check !!
     if entry.val.toLowerCase().match /[^\/]+(?:alaska|uaf)\.edu/
-      usermsg = "Blocking alaska.edu or uaf.edu not allowed. "+
-        " If this is time critical ask a human for help; otherwise open a ticket."
-      notifySubscribers "Request by #{who} failed safety check: #{fullcmd}\nReason: #{usermsg}"
-      return msg.reply usermsg
+      usermsg = "Blocking alaska.edu or uaf.edu is not allowed. #{safety_fail_note}"
+      logmsg = "#{modulename}: Request by #{who} failed safety check: #{fullcmd}"
+      robot.logger.info logmsg
+      notifySubscribers "#{logmsg}\nReason: #{usermsg}"
+      #msg.reply usermsg
+
+      return
 
   #console.log "#{l_val}: #{entry.type} => #{entry.val}"
 
