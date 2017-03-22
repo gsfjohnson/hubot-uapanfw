@@ -90,10 +90,12 @@ expireEntriesFromList = (list_name) ->
     notifySubscribers msg
     fs.writeFileSync fwdata_file, JSON.stringify(fwdata), 'utf-8'
 
+
 notifySubscribers = (msg, current_un = false) ->
   console.error 'bad robotRef' unless robotRef
   for un in fwdata.notify
     robotRef.send { room: un }, msg unless current_un && un == current_un
+
 
 addListEntry = (robot, msg) ->
   fullcmd = String(msg.match.shift())
@@ -118,6 +120,7 @@ addListEntry = (robot, msg) ->
     if entry.val.match /^(?:137\.229\.|199\.165\.)/
       usermsg = "Blocking CIDRs begining with 137.229. or 199.165. not allowed. "+
         " If this is time critical ask a human for help; otherwise open a ticket."
+      notifySubscribers "Request by #{who} failed safety check: #{fullcmd}\nReason: #{usermsg}"
       return msg.reply usermsg
 
   else if extra = l_val.match /^([a-zA-Z][a-zA-Z0-9\.]+)$/
@@ -128,6 +131,7 @@ addListEntry = (robot, msg) ->
     if entry.val.toLowerCase().match /(?:alaska|uaf)\.edu$/
       usermsg = "Blocking alaska.edu or uaf.edu not allowed. "+
         " If this is time critical ask a human for help; otherwise open a ticket."
+      notifySubscribers "Request by #{who} failed safety check: #{fullcmd}\nReason: #{usermsg}"
       return msg.reply usermsg
 
   else
@@ -143,6 +147,7 @@ addListEntry = (robot, msg) ->
     if entry.val.toLowerCase().match /[^\/]+(?:alaska|uaf)\.edu/
       usermsg = "Blocking alaska.edu or uaf.edu not allowed. "+
         " If this is time critical ask a human for help; otherwise open a ticket."
+      notifySubscribers "Request by #{who} failed safety check: #{fullcmd}\nReason: #{usermsg}"
       return msg.reply usermsg
 
   #console.log "#{l_val}: #{entry.type} => #{entry.val}"
