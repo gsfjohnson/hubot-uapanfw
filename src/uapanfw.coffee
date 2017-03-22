@@ -137,7 +137,6 @@ addListEntry = (robot, msg) ->
   list_name = String(msg.match.shift())
   list_name = 'whitelist' if list_name.indexOf('w') == 0
   list_name = 'blacklist' if list_name.indexOf('b') == 0
-  #console.log list_name
 
   l_val = String(msg.match.shift())
   if extra = l_val.match /^(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(?:\/\d{1,2}|))$/
@@ -184,11 +183,8 @@ addListEntry = (robot, msg) ->
       notifyAdmins "#{logmsg}\nReason: #{usermsg}"
       return
 
-  #console.log "#{l_val}: #{entry.type} => #{entry.val}"
-
   expires = String(msg.match.shift())
   if expires isnt 'undefined'
-    #console.log "processing expiration: #{expires}"
     extra = expires.match /\+(\d)([hdwMQy])/
     if extra?
       n = extra[1]
@@ -213,6 +209,81 @@ addListEntry = (robot, msg) ->
 
   logmsg = "#{modulename}: robot responded to #{who}: " +
     "added entry to #{list_name}"
+  robot.logger.info logmsg
+
+  #usermsg = usermsg.replace(/  Change will be applied in \< 5 minutes\./, '')
+  notifySubscribers usermsg, who
+
+
+extendListEntry = (robot, msg) ->
+  fullcmd = String(msg.match.shift())
+  who = msg.envelope.user.name
+
+  list_name = String(msg.match.shift())
+  list_name = 'whitelist' if list_name.indexOf('w') == 0
+  list_name = 'blacklist' if list_name.indexOf('b') == 0
+
+  l_search = String(msg.match.shift())
+
+  if l_search.toLowerCase().indexOf('https://') == 0
+    usermsg = "#{list_name}ing of https links not supported."
+    return msg.reply usermsg
+
+  if l_search.toLowerCase().indexOf('http://') == 0
+    l_search = l_search.replace(/http:\/\//i,'')
+
+  logmsg = "#{modulename}: #{who} requested: #{list_name} extend #{l_search}"
+  robot.logger.info logmsg
+
+  # check for matches
+  matches = 0
+  entry = undefined
+  for obj in fwdata[list_name] when obj.val.indexOf(l_search) > -1
+    #console.log "obj.type: [#{obj.type}] l_search: [#{l_search}] obj.val: [#{obj.val}]"
+    if obj.val.indexOf(l_search) > -1
+      #console.log "l_search: [#{l_search}] MATCHED obj.val: [#{obj.val}]"
+      matches++
+      entry = obj
+  if matches != 1
+    usermsg = "search matched zero or more than a single entry; " +
+      "improve search term and try again"
+    return msg.reply usermsg
+  #console.log entry
+
+  expires = String(msg.match.shift())
+  if expires is 'undefined'
+    usermsg = "you must provide a new absolute or relative expiration"
+    return msg.reply usermsg
+
+  extra = expires.match /(-|\+|)(\d+)([hdwMQy])/
+  if extra?
+    direction = extra.shift()
+    n = extra.shift()
+    unit = extra.shift()
+    if direction == '+'
+      entry.expires = moment(entry.expires).add(n,unit).format()
+    else if direction == '-'
+      entry.expires = moment(entry.expires).subtract(n,unit).format()
+    else
+      entry.expires = moment().add(n,unit).format()
+  else if moment(expires).isValid()
+    entry.expires = moment(expires).format()
+  else
+    usermsg = "invalid expiration date: #{expires}"
+    return msg.reply usermsg
+
+  logmsg = "#{modulename}: #{who} requested: " +
+    "#{list_name} #{entry.type} #{entry.val} new expiration #{moment(entry.expires).format(timefmt)}"
+  robot.logger.info logmsg
+
+  fs.writeFileSync fwdata_file, JSON.stringify(fwdata), 'utf-8'
+
+  usermsg = "#{who} updated expiration for `#{entry.val}` #{list_name}ing. " +
+    "New expiration `#{entry.expires}`."
+  msg.reply usermsg
+
+  logmsg = "#{modulename}: robot responded to #{who}: " +
+    "updated entry in #{list_name}"
   robot.logger.info logmsg
 
   #usermsg = usermsg.replace(/  Change will be applied in \< 5 minutes\./, '')
@@ -248,17 +319,12 @@ deleteListEntry = (robot, msg) ->
   for obj in fwdata[list_name]
     expires = moment(obj.expires)
     if l_type and l_type != obj.type
-      errfmt = 'type: [%s] != [%s]'
-      #console.log sprintf errfmt, l_type, obj.type
       new_entry.push obj
       continue
     if l_search and obj.val.indexOf(l_search) == -1
-      errfmt = 'search: indexOf[%s] not found in [%s]'
-      #console.log sprintf errfmt, l_search, obj.val
       new_entry.push obj
       continue
     if expires.isBefore() # now
-      #console.log 'expires: ['+ expires +'] is before now'
       new_entry.push obj
       continue
     deleted.push sprintf displayfmt, obj.type, obj.val,
@@ -302,16 +368,11 @@ showList = (robot, msg) ->
   for obj in fwdata[list_name]
     expires = moment(obj.expires)
     if l_type and l_type != obj.type
-      #console.log 'skipping type: '+ obj.type
       continue
     if l_search and obj.val.indexOf(l_search) == -1
-      #console.log 'skipping search: '+ obj.val
       continue
     if expires.isBefore() # now
-      #console.log 'skipping expires: '+ obj.expires
       continue
-    #console.log 'adding to array: '
-    #console.log obj
     arr.push sprintf displayfmt, obj.type, obj.val, expires.fromNow(), obj.creator
 
   msg.reply "#{list_name} items and expirations\n```\n"+ arr.join("\n") + "\n```"
@@ -462,8 +523,9 @@ module.exports = (robot) ->
     cmds = ['```']
     arr = [
       modulename + " show (white|black)list [searchterm]"
-      modulename + " add (white|black)list <weburl.tld/etc|x.x.x.x>"
+      modulename + " add (white|black)list <weburl.tld/etc|x.x.x.x> [+7d]"
       modulename + " del (white|black)list <weburl.tld/etc|x.x.x.x>"
+      modulename + " extend (white|black)list <weburl.tld/etc|x.x.x.x> [[+-]20d]"
       modulename + " subscribe [username] - subscribe to change notifications"
       modulename + " unsubscribe [username]"
       modulename + " show subscribers"
@@ -506,6 +568,12 @@ module.exports = (robot) ->
     return unless is2fa msg
 
     return deleteListEntry robot, msg
+
+  robot.respond /(?:firewall|fw) (?:extend|ext|e) (whitelist|wl|w|blacklist|bl|b) ([^ ]+)(?: ([^ ]+)|)$/i, (msg) ->
+    return unless isAuthorized msg
+    return unless is2fa msg
+
+    return extendListEntry robot, msg
 
   robot.respond /(?:firewall|fw) (?:subscribe|sub)(?: ([^ ]+))$/i, (msg) ->
     return subscribe robot, msg
