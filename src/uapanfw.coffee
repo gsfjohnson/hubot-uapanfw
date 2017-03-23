@@ -18,6 +18,7 @@
 
 fs = require 'fs'
 moment = require 'moment'
+#ipaddr = require 'ipaddr.js'
 sprintf = require("sprintf-js").sprintf
 
 modulename = 'fw'
@@ -26,6 +27,24 @@ safety_fail_note = 'If this is time critical ask a human; otherwise please open 
 displayfmt = '%-4s %-50s %-15s %s'
 timefmt = 'YYYY-MM-DD HH:mm:ss ZZ'
 svcQueueIntervalMs = 300 * 1000
+
+#preventCidrBlacklist = [
+#  ipaddr.parseCIDR '137.229.0.0/16'
+#  ipaddr.parseCIDR '199.165.64.0/18'
+#  ipaddr.parseCIDR '10.0.0.0/8'
+#  ipaddr.parseCIDR '172.16.0.0/12'
+#  ipaddr.parseCIDR '192.168.0.0/16'
+#]
+
+preventDomainBlacklist = [
+  [ 'alaska.edu', /alaska\.edu$/ ]
+  [ 'uaf.edu', /uaf\.edu$/ ]
+]
+
+preventUrlBlacklist = [
+  [ 'alaska.edu', /[^\/]+alaska.edu\// ]
+  [ 'uaf.edu', /[^\/]+uaf.edu\// ]
+]
 
 robotRef = false
 fwdata =
@@ -93,8 +112,7 @@ preExpireNotify = (list_name) ->
         moment(obj.expires).fromNow(), obj.creator
 
   if expiring.length > 1
-    usermsg = "fw: #{list_name} entries will expire in 1 hour. " +
-      "Change will be applied in < 5 minutes. Will expire: " +
+    usermsg = "fw: #{list_name} entries will expire soon: " +
       "```"+ expiring.join("\n") + "```"
     notifySubscribers usermsg
     fs.writeFileSync fwdata_file, JSON.stringify(fwdata), 'utf-8'
@@ -115,8 +133,7 @@ expireEntriesFromList = (list_name) ->
     while removequeue.length > 0
       obj = removequeue.shift()
       list.splice(list.indexOf(obj), 1)
-    usermsg = "fw: #{list_name} entries expired and have been removed. " +
-      "Change will be applied in < 5 minutes. Removed: " +
+    usermsg = "fw: #{list_name} entries expired and have been removed: " +
       "```"+ deleted.join("\n") + "```"
     notifySubscribers usermsg
     fs.writeFileSync fwdata_file, JSON.stringify(fwdata), 'utf-8'
@@ -180,8 +197,9 @@ addListEntry = (robot, msg) ->
     entry.val = extra[1]
 
     # safety check !!
-    if entry.val.toLowerCase().match /(?:alaska|uaf)\.edu$/
-      usermsg = "Blocking UA domains is not allowed. #{safety_fail_note}"
+    for arr in preventDomainBlacklist when entry.val.toLowerCase().match arr[1]
+    #if entry.val.toLowerCase().match /(?:alaska|uaf)\.edu$/
+      usermsg = "Blocking `#{arr[0]}` is not allowed. #{safety_fail_note}"
       logmsg = "#{modulename}: #{who} request failed safety check: #{fullcmd}"
       robot.logger.info logmsg
       msg.reply usermsg
@@ -198,8 +216,9 @@ addListEntry = (robot, msg) ->
       entry.val = entry.val.replace(/http:\/\//i,'')
 
     # safety check !!
-    if entry.val.toLowerCase().match /[^\/]+(?:alaska|uaf)\.edu/
-      usermsg = "Blocking UA urls is not allowed. #{safety_fail_note}"
+    for arr in preventUrlBlacklist when entry.val.toLowerCase().match arr[1]
+    #if entry.val.toLowerCase().match /[^\/]+(?:alaska|uaf)\.edu/
+      usermsg = "Blocking `#{arr[0]}` is not allowed. #{safety_fail_note}"
       logmsg = "#{modulename}: #{who} request failed safety check: #{fullcmd}"
       robot.logger.info logmsg
       msg.reply usermsg
@@ -594,7 +613,7 @@ module.exports = (robot) ->
 
     return addListEntry robot, msg
 
-  robot.respond /(?:firewall|fw) (?:delete|del|d) (whitelist|wl|w|blacklist|bl|b) (url|cidr) ([^ ]+)$/i, (msg) ->
+  robot.respond /(?:firewall|fw) (?:delete|del|d) (whitelist|wl|w|blacklist|bl|b) ([^ ]+)$/i, (msg) ->
     return unless isAuthorized msg
     return unless is2fa msg
 
