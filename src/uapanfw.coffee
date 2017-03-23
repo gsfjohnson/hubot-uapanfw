@@ -72,9 +72,32 @@ is2fa = (msg) ->
 
 
 expirationWorker = ->
+  preExpireNotify 'blacklist'
+  preExpireNotify 'whitelist'
   expireEntriesFromList 'blacklist'
   expireEntriesFromList 'whitelist'
   setTimeout expirationWorker, svcQueueIntervalMs
+
+
+preExpireNotify = (list_name) ->
+  list = fwdata[list_name]
+  removequeue = []
+  expiring = [
+    sprintf displayfmt, 'Type', 'Value', 'Expiration', 'Creator'
+  ]
+  for obj in fwdata[list_name]
+    continue if obj.expire_notified
+    if moment(obj.expires).valueOf() < ( Date.now() + (3600*1000) )
+      obj.expire_notified = true
+      expiring.push sprintf displayfmt, obj.type, obj.val,
+        moment(obj.expires).fromNow(), obj.creator
+
+  if expiring.length > 1
+    usermsg = "fw: #{list_name} entries will expire in 1 hour. " +
+      "Change will be applied in < 5 minutes. Will expire: " +
+      "```"+ expiring.join("\n") + "```"
+    notifySubscribers usermsg
+    fs.writeFileSync fwdata_file, JSON.stringify(fwdata), 'utf-8'
 
 
 expireEntriesFromList = (list_name) ->
@@ -92,10 +115,10 @@ expireEntriesFromList = (list_name) ->
     while removequeue.length > 0
       obj = removequeue.shift()
       list.splice(list.indexOf(obj), 1)
-    msg = "fw: #{list_name} entries expired and have been removed. " +
+    usermsg = "fw: #{list_name} entries expired and have been removed. " +
       "Change will be applied in < 5 minutes. Removed: " +
       "```"+ deleted.join("\n") + "```"
-    notifySubscribers msg
+    notifySubscribers usermsg
     fs.writeFileSync fwdata_file, JSON.stringify(fwdata), 'utf-8'
 
 
@@ -185,10 +208,13 @@ addListEntry = (robot, msg) ->
 
   expires = String(msg.match.shift())
   if expires isnt 'undefined'
-    extra = expires.match /\+(\d)([hdwMQy])/
+    extra = expires.match /\+(\d+)([a-zA-Z])/
     if extra?
       n = extra[1]
       unit = extra[2]
+      unless unit in ['h','d','w','M','Q','y']
+        usermsg = "Invalid unit `#{unit}` in expiration `#{expires}`. Use h for hours, d for days, w for weeks, M for months, Q for quarters, or y for years."
+        return msg.reply usermsg
       entry.expires = moment().add(n,unit).format()
     else if moment(expires).isValid()
       entry.expires = moment(expires).format()
@@ -255,11 +281,14 @@ extendListEntry = (robot, msg) ->
     usermsg = "you must provide a new absolute or relative expiration"
     return msg.reply usermsg
 
-  extra = expires.match /(-|\+|)(\d+)([hdwMQy])/
+  extra = expires.match /(-|\+|)(\d+)([a-zA-Z])/
   if extra?
     direction = extra.shift()
     n = extra.shift()
     unit = extra.shift()
+    unless unit in ['h','d','w','M','Q','y']
+      usermsg = "Invalid unit `#{unit}` in expiration `#{expires}`. Use h for hours, d for days, w for weeks, M for months, Q for quarters, or y for years."
+      return msg.reply usermsg
     if direction == '+'
       entry.expires = moment(entry.expires).add(n,unit).format()
     else if direction == '-'
@@ -271,6 +300,8 @@ extendListEntry = (robot, msg) ->
   else
     usermsg = "invalid expiration date: #{expires}"
     return msg.reply usermsg
+
+  obj.expire_notified = false
 
   logmsg = "#{modulename}: #{who} requested: " +
     "#{list_name} #{entry.type} #{entry.val} new expiration #{moment(entry.expires).format(timefmt)}"
