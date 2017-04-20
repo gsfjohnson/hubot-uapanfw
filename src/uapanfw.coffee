@@ -22,7 +22,7 @@ moment = require 'moment'
 sprintf = require("sprintf-js").sprintf
 
 modulename = 'fw'
-fwdata_file = modulename + ".json"
+data_file = modulename + ".json"
 safety_fail_note = 'If this is time critical ask a human; otherwise please open a ticket.'
 displayfmt = '%-4s %-50s %-15s %s'
 timefmt = 'YYYY-MM-DD HH:mm:ss ZZ'
@@ -56,10 +56,10 @@ fwdata =
 fwnames =
   '10.9.0.252': 'Fairbanks-1'
   '10.9.0.253': 'Fairbanks-2'
-  '10.9.128.252': 'Anchorage-1'
-  '10.9.128.253': 'Anchorage-2'
-  '10.9.192.252': 'Juneau-1'
-  '10.9.192.253': 'Juneau-2'
+  '10.9.128.10': 'Anchorage-1'
+  '10.9.128.11': 'Anchorage-2'
+  '10.9.192.10': 'Juneau-1'
+  '10.9.192.11': 'Juneau-2'
 
 if process.env.HUBOT_AUTH_ADMIN
   admins = process.env.HUBOT_AUTH_ADMIN.split ','
@@ -115,7 +115,7 @@ preExpireNotify = (list_name) ->
     usermsg = "fw: #{list_name} entries will expire soon: " +
       "```"+ expiring.join("\n") + "```"
     notifySubscribers usermsg
-    fs.writeFileSync fwdata_file, JSON.stringify(fwdata), 'utf-8'
+    writeData()
 
 
 expireEntriesFromList = (list_name) ->
@@ -136,19 +136,19 @@ expireEntriesFromList = (list_name) ->
     usermsg = "fw: #{list_name} entries expired and have been removed: " +
       "```"+ deleted.join("\n") + "```"
     notifySubscribers usermsg
-    fs.writeFileSync fwdata_file, JSON.stringify(fwdata), 'utf-8'
+    writeData()
 
 
-notifySubscribers = (msg, current_un = false) ->
+notifySubscribers = (usermsg, current_un = false) ->
   console.error 'bad robotRef' unless robotRef
   for un in fwdata.notify
-    robotRef.send { room: un }, msg unless current_un && un == current_un
+    robotRef.send { room: un }, usermsg unless current_un && un == current_un
 
 
-notifyAdmins = (msg, current_un = false) ->
+notifyAdmins = (usermsg, current_un = false) ->
   console.error 'bad robotRef' unless robotRef
-  for un in admins
-    robotRef.send { room: un }, msg unless current_un && un == current_un
+  for un in admins when un.indexOf('U') != 0
+    robotRef.send { room: un }, usermsg unless current_un && un == current_un
 
 
 showAdmins = (robot, msg) ->
@@ -246,7 +246,7 @@ addListEntry = (robot, msg) ->
   robot.logger.info logmsg
 
   fwdata[list_name].push entry
-  fs.writeFileSync fwdata_file, JSON.stringify(fwdata), 'utf-8'
+  writeData()
 
   usermsg = "#{who} added `#{entry.val}` to firewall #{list_name}. " +
     "Expires `#{entry.expires}`.  Change will be applied in < 5 minutes."
@@ -326,7 +326,7 @@ extendListEntry = (robot, msg) ->
     "#{list_name} #{entry.type} #{entry.val} new expiration #{moment(entry.expires).format(timefmt)}"
   robot.logger.info logmsg
 
-  fs.writeFileSync fwdata_file, JSON.stringify(fwdata), 'utf-8'
+  writeData()
 
   usermsg = "#{who} updated expiration for `#{entry.val}` #{list_name}ing. " +
     "New expiration `#{entry.expires}`."
@@ -386,7 +386,7 @@ deleteListEntry = (robot, msg) ->
       "Change will be applied in < 5 minutes. Removed: " +
       "```"+ deleted.join("\n") + "```"
     fwdata[list_name] = new_entry
-    fs.writeFileSync fwdata_file, JSON.stringify(fwdata), 'utf-8'
+    writeData()
   else
     usermsg = "#{list_name} delete request did not match any records."
   msg.reply usermsg
@@ -449,7 +449,7 @@ subscribe = (robot, msg) ->
     "added #{who} to firewall change notifications"
   robot.logger.info logmsg
 
-  fs.writeFileSync fwdata_file, JSON.stringify(fwdata), 'utf-8'
+  writeData()
 
 
 unsubscribe = (robot, msg) ->
@@ -470,7 +470,7 @@ unsubscribe = (robot, msg) ->
     "removed #{who} from firewall change notifications"
   robot.logger.info logmsg
 
-  fs.writeFileSync fwdata_file, JSON.stringify(fwdata), 'utf-8'
+  writeData()
 
 
 showSubscribers = (robot, msg) ->
@@ -532,7 +532,7 @@ rememberCheckin = (clientip,list_name,l_type) ->
   for obj in fwdata.firewalls
     if obj.ip is clientip and obj.type is l_type and obj.list is list_name
       obj.checkin = moment().add(5,'minutes')
-      fs.writeFileSync fwdata_file, JSON.stringify(fwdata), 'utf-8'
+      writeData()
       return
   # otherwise create new object
   obj =
@@ -545,7 +545,14 @@ rememberCheckin = (clientip,list_name,l_type) ->
   if fwdata.firewalls.length > 1
     fwdata.firewalls = fwdata.firewalls.sort (a,b) ->
       sortBy('name',a,b) or sortBy('list',a,b) or sortBy('type',a,b)
-  fs.writeFileSync fwdata_file, JSON.stringify(fwdata), 'utf-8'
+  writeData()
+
+
+writeData = ->
+  fs.writeFileSync data_file, JSON.stringify(fwdata), 'utf-8'
+  logmsg = "#{modulename}: wrote #{data_file}"
+  robotRef.logger.info logmsg
+
 
 module.exports = (robot) ->
 
@@ -553,9 +560,11 @@ module.exports = (robot) ->
   setTimeout expirationWorker, svcQueueIntervalMs
 
   try
-    fwdata = JSON.parse fs.readFileSync fwdata_file, 'utf-8'
+    fwdata = JSON.parse fs.readFileSync data_file, 'utf-8'
+    robot.logger.info "#{modulename}: read #{data_file}" if robot.logger
   catch error
-    console.log('Unable to read file', error) unless error.code is 'ENOENT'
+    unless error.code is 'ENOENT'
+      console.log("#{modulename}: unable to read #{data_file}: ", error)
 
   robot.router.get "/#{robot.name}/#{modulename}/blacklist/url", (req, res) ->
     return httpGetList robot, req, res, 'blacklist', 'url'
@@ -570,6 +579,7 @@ module.exports = (robot) ->
     return httpGetList robot, req, res, 'whitelist', 'cidr'
 
   robot.respond /(?:firewall|fw)(?: help| h|)$/, (msg) ->
+    who = msg.envelope.user.name
     cmds = ['```']
     arr = [
       modulename + " show (white|black)list [searchterm]"
@@ -589,7 +599,7 @@ module.exports = (robot) ->
 
     msg.reply cmds.join "\n"
 
-    logmsg = "#{modulename}: robot responded to #{msg.envelope.user.name}: " +
+    logmsg = "#{modulename}: robot responded to #{who}: " +
       "displayed #{modulename} help"
     robot.logger.info logmsg
 
