@@ -52,7 +52,7 @@ fwdata =
   blacklist: []
   whitelist: []
   firewalls: []
-  terse: []
+  terse: {}
 
 fwnames =
   '10.9.0.252': 'Fairbanks-1'
@@ -252,7 +252,7 @@ addListEntry = (robot, msg) ->
   usermsg = "Added `#{entry.val}` to fw #{list_name}."
   if expires != 'undefined'
     usermsg += "  Expires `#{entry.expires}`."
-  unless fwdata.terse[who] && fwdata.terse[who].isAfter()
+  unless who of fwdata.terse && fwdata.terse[who].isAfter()
     usermsg += "  Change will be applied in < 5 minutes."
   msg.send usermsg
 
