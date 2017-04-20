@@ -52,8 +52,7 @@ fwdata =
   blacklist: []
   whitelist: []
   firewalls: []
-  terse:
-    whatever: moment()
+  terse: {}
 
 fwnames =
   '10.9.0.252': 'Fairbanks-1'
@@ -89,6 +88,12 @@ is2fa = (msg) ->
   u = msg.envelope.user
   return true if robotRef.auth.is2fa(u)
   msg.reply "2fa required.  Use `auth 2fa` to validate identity."
+  return false
+
+
+isTerse = (who) ->
+  fwdata['terse'] = {} unless 'terse' of fwdata
+  return true if who of fwdata.terse && fwdata.terse[who].isAfter()
   return false
 
 
@@ -253,7 +258,7 @@ addListEntry = (robot, msg) ->
   usermsg = "Added `#{entry.val}` to fw #{list_name}."
   if expires != 'undefined'
     usermsg += "  Expires `#{entry.expires}`."
-  unless ( who of fwdata.terse ) && fwdata.terse[who].isAfter()
+  unless isTerse who
     usermsg += "  Change will be applied in < 5 minutes."
   msg.send usermsg
 
