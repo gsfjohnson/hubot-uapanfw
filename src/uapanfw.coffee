@@ -52,6 +52,7 @@ fwdata =
   blacklist: []
   whitelist: []
   firewalls: []
+  terse: []
 
 fwnames =
   '10.9.0.252': 'Fairbanks-1'
@@ -227,12 +228,12 @@ addListEntry = (robot, msg) ->
 
   expires = String(msg.match.shift())
   if expires isnt 'undefined'
-    extra = expires.match /\+(\d+)([a-zA-Z])/
+    extra = expires.match /\+(\d+)([a-zA-Z]+)/
     if extra?
       n = extra[1]
       unit = extra[2]
-      unless unit in ['h','d','w','M','Q','y']
-        usermsg = "Invalid unit `#{unit}` in expiration `#{expires}`. Use h for hours, d for days, w for weeks, M for months, Q for quarters, or y for years."
+      unless unit in ['h','hours','d','days','w','weeks','M','months','Q','quarters','y','years']
+        usermsg = "Invalid unit `#{unit}` in expiration `#{expires}`. Use h or hours, d or days, w or weeks, M or months, Q or quarters, y or years."
         return msg.reply usermsg
       entry.expires = moment().add(n,unit).format()
     else if moment(expires).isValid()
@@ -248,16 +249,24 @@ addListEntry = (robot, msg) ->
   fwdata[list_name].push entry
   writeData()
 
-  usermsg = "#{who} added `#{entry.val}` to firewall #{list_name}. " +
-    "Expires `#{entry.expires}`.  Change will be applied in < 5 minutes."
-  msg.reply usermsg
+  usermsg = "Added `#{entry.val}` to fw #{list_name}."
+  if expires != 'undefined'
+    usermsg += "  Expires `#{entry.expires}`."
+  unless fwdata.terse[who] && fwdata.terse[who].isAfter()
+    usermsg += "  Change will be applied in < 5 minutes."
+  msg.send usermsg
 
   logmsg = "#{modulename}: robot responded to #{who}: " +
     "added entry to #{list_name}"
   robot.logger.info logmsg
 
-  #usermsg = usermsg.replace(/  Change will be applied in \< 5 minutes\./, '')
-  notifySubscribers usermsg, who
+  notifymsg = "#{who} added `#{entry.val}` to fw #{list_name}."
+  if expires isnt 'undefined'
+    notifymsg += "  Expires `#{entry.expires}`."
+  notifySubscribers notifymsg, who
+
+  # be terse after the first utterance
+  fwdata.terse[who] = moment().add(30,'minutes')
 
 
 extendListEntry = (robot, msg) ->
