@@ -93,7 +93,7 @@ is2fa = (msg) ->
 
 isTerse = (who) ->
   fwdata['terse'] = {} unless 'terse' of fwdata
-  return true if who of fwdata.terse && fwdata.terse[who].isAfter()
+  return true if who of fwdata.terse && moment(fwdata.terse[who]).isAfter()
   return false
 
 
@@ -272,7 +272,7 @@ addListEntry = (robot, msg) ->
   notifySubscribers notifymsg, who
 
   # be terse after the first utterance
-  fwdata.terse[who] = moment().add(30,'minutes')
+  fwdata.terse[who] = moment().add(30,'minutes').format()
 
 
 extendListEntry = (robot, msg) ->
