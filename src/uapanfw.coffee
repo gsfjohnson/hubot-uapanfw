@@ -199,13 +199,12 @@ addListEntry = (robot, msg) ->
       notifyAdmins "#{logmsg}\nReason: #{usermsg}"
       return
 
-  else if extra = l_val.match /^([a-zA-Z][a-zA-Z0-9\.]+)$/
+  else if extra = l_val.match /^([a-zA-Z][a-zA-Z0-9\.-]+)$/
     entry.type = 'domain'
     entry.val = extra[1]
 
     # safety check !!
     for arr in preventDomainBlacklist when entry.val.toLowerCase().match arr[1]
-    #if entry.val.toLowerCase().match /(?:alaska|uaf)\.edu$/
       usermsg = "Blocking `#{arr[0]}` is not allowed. #{safety_fail_note}"
       logmsg = "#{modulename}: #{who} request failed safety check: #{fullcmd}"
       robot.logger.info logmsg
@@ -587,19 +586,25 @@ module.exports = (robot) ->
   robot.router.get "/#{robot.name}/#{modulename}/blacklist/cidr", (req, res) ->
     return httpGetList robot, req, res, 'blacklist', 'cidr'
 
+  robot.router.get "/#{robot.name}/#{modulename}/blacklist/domain", (req, res) ->
+    return httpGetList robot, req, res, 'blacklist', 'domain'
+
   robot.router.get "/#{robot.name}/#{modulename}/whitelist/url", (req, res) ->
     return httpGetList robot, req, res, 'whitelist', 'url'
 
   robot.router.get "/#{robot.name}/#{modulename}/whitelist/cidr", (req, res) ->
     return httpGetList robot, req, res, 'whitelist', 'cidr'
 
+  robot.router.get "/#{robot.name}/#{modulename}/whitelist/domain", (req, res) ->
+    return httpGetList robot, req, res, 'whitelist', 'domain'
+
   robot.respond /(?:firewall|fw)(?: help| h|)$/, (msg) ->
     who = msg.envelope.user.name
     cmds = ['```']
     arr = [
       modulename + " show (white|black)list [searchterm]"
-      modulename + " add (white|black)list <weburl.tld/etc|x.x.x.x> [+7d]"
-      modulename + " del (white|black)list <weburl.tld/etc|x.x.x.x>"
+      modulename + " add (white|black)list <domain.tld|weburl.tld/etc|x.x.x.x> [+7d]"
+      modulename + " del (white|black)list <domain.tld|weburl.tld/etc|x.x.x.x>"
       modulename + " extend (white|black)list <weburl.tld/etc|x.x.x.x> [[+-]20d]"
       modulename + " subscribe [username] - subscribe to change notifications"
       modulename + " unsubscribe [username]"
