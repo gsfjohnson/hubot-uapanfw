@@ -199,7 +199,7 @@ addListEntry = (robot, msg) ->
       notifyAdmins "#{logmsg}\nReason: #{usermsg}"
       return
 
-  else if extra = l_val.match /^([a-zA-Z][-a-zA-Z0-9\.]+)$/
+  else if extra = l_val.match /^(?:http:\/\/|)([a-zA-Z][-a-zA-Z0-9\.]+)$/
     entry.type = 'domain'
     entry.val = extra[1]
 
