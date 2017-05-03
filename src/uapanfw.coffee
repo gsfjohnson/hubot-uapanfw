@@ -254,20 +254,17 @@ addListEntry = (robot, msg) ->
   fwdata[list_name].push entry
   writeData()
 
-  usermsg = "Added `#{entry.val}` to fw #{list_name}."
-  if expires != 'undefined'
-    usermsg += "  Expires `#{entry.expires}`."
-  unless isTerse who
-    usermsg += "  Change will be applied in < 5 minutes."
+  usermsg = "Added `#{entry.val}` (#{entry.type}) to fw #{list_name}."
+  usermsg += "  Expires `#{entry.expires}`." if expires isnt 'undefined'
+  usermsg += "  Change will be applied in < 5 minutes." unless isTerse who
   msg.send usermsg
 
   logmsg = "#{modulename}: robot responded to #{who}: " +
     "added entry to #{list_name}"
   robot.logger.info logmsg
 
-  notifymsg = "#{who} added `#{entry.val}` to fw #{list_name}."
-  if expires isnt 'undefined'
-    notifymsg += "  Expires `#{entry.expires}`."
+  notifymsg = "#{who} added `#{entry.val}` (#{entry.type}) to fw #{list_name}."
+  notifymsg += "  Expires `#{entry.expires}`." if expires isnt 'undefined'
   notifySubscribers notifymsg, who
 
   # be terse after the first utterance
