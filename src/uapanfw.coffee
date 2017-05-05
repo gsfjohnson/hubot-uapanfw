@@ -424,7 +424,9 @@ showList = (robot, msg) ->
   logmsg = "#{modulename}: #{msg.envelope.user.name} requested: show #{list_name}"
   robot.logger.info logmsg
 
-  arr = []
+  epb = 20 # entries per block
+  arr = [] # temp container
+  output = [] # output blocks
   arr.push sprintf displayfmt, 'Type', 'Value', 'Expiration', 'Creator'
   for obj in fwdata[list_name]
     expires = moment(obj.expires)
@@ -434,9 +436,17 @@ showList = (robot, msg) ->
       continue
     if expires.isBefore() # now
       continue
-    arr.push sprintf displayfmt, obj.type, obj.val, expires.fromNow(), obj.creator
+    if arr.length >= epb
+      output.push arr.join("\n")
+      arr = []
+    else
+      arr.push sprintf displayfmt, obj.type, obj.val, expires.fromNow(), obj.creator
 
-  msg.reply "#{list_name} items and expirations\n```\n"+ arr.join("\n") + "\n```"
+  if arr.length > 0
+    output.push arr.join("\n")
+
+  msg.send "Here is the current #{list_name}:\n"
+  msg.send "```#{ob}\n```" for ob in output
 
   logmsg = "#{modulename}: robot responded to #{msg.envelope.user.name}: " +
     "displayed #{list_name} items and expirations"
