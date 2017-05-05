@@ -339,15 +339,14 @@ extendListEntry = (robot, msg) ->
 
   writeData()
 
-  usermsg = "#{who} updated expiration for `#{entry.val}` #{list_name}ing. " +
-    "New expiration `#{entry.expires}`."
+  usermsg = "#{who} updated expiration for `#{entry.val}` #{list_name}ing."
+  usermsg += "  New expiration `#{entry.expires}`."
   msg.reply usermsg
 
   logmsg = "#{modulename}: robot responded to #{who}: " +
     "updated entry in #{list_name}"
   robot.logger.info logmsg
 
-  #usermsg = usermsg.replace(/  Change will be applied in \< 5 minutes\./, '')
   notifySubscribers usermsg, who
 
 
@@ -393,9 +392,9 @@ deleteListEntry = (robot, msg) ->
 
   deltaN = fwdata[list_name].length - new_entry.length
   if deltaN > 0
-    usermsg = "#{who} removed `#{deltaN}` fw #{list_name} entries.  " +
-      "Change will be applied in < 5 minutes. Removed: " +
-      "```"+ deleted.join("\n") + "```"
+    usermsg = "#{who} removed `#{deltaN}` fw #{list_name} entries."
+    usermsg += "  Change will be applied in < 5 minutes." unless isTerse who
+    usermsg += "  Removed: ```"+ deleted.join("\n") + "```"
     fwdata[list_name] = new_entry
     writeData()
   else
@@ -539,10 +538,10 @@ showCheckins = (robot, msg) ->
   arr = []
   for obj in fwdata.firewalls
     obj.checkin = moment(obj.checkin) if typeof(obj.checkin) is 'string'
-    arr.push sprintf '%-18s %-10s %-8s %-15s', obj.name, obj.list, obj.type,
+    arr.push sprintf '%-16s %-10s %-10s %-15s', obj.name, obj.list, obj.type,
       obj.checkin.fromNow()
-  usermsg = "Expect firewall check times: ```"+ arr.join("\n") + "```"
-  msg.reply usermsg
+  usermsg = "Expected firewall check times: ```"+ arr.join("\n") + "```"
+  msg.send usermsg
 
   logmsg = "#{modulename}: robot responded to #{who}: checkins"
   robot.logger.info logmsg
