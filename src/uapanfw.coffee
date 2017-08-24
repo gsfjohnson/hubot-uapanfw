@@ -20,7 +20,6 @@ fs = require 'fs'
 moment = require 'moment'
 #ipaddr = require 'ipaddr.js'
 sprintf = require("sprintf-js").sprintf
-syslogd = require('syslogd')
 
 modulename = 'fw'
 data_file = modulename + ".json"
