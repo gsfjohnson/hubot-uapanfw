@@ -68,15 +68,6 @@ if process.env.HUBOT_AUTH_ADMIN
 else
   console.warn "#{modulename}: HUBOT_AUTH_ADMIN environment variable not set."
 
-processSyslogMessage = (msg) ->
-  console.error 'bad robotRef' unless robotRef
-  console.info msg.msg
-  #for un in fwdata.notify
-  #  robotRef.send { room: un }, usermsg unless current_un && un == current_un
-
-# Start Syslog listener
-syslogd(processSyslogMessage).listen(514, function(err) { console.log('start') })
-
 # borrowed from
 # http://stackoverflow.com/questions/9796764/how-do-i-sort-an-array-with-coffeescript
 sortBy = (key, a, b, r) ->
