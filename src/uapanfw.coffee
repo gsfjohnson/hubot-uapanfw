@@ -20,6 +20,7 @@ fs = require 'fs'
 moment = require 'moment'
 #ipaddr = require 'ipaddr.js'
 sprintf = require("sprintf-js").sprintf
+syslogd = require('syslogd')
 
 modulename = 'fw'
 data_file = modulename + ".json"
@@ -66,6 +67,15 @@ if process.env.HUBOT_AUTH_ADMIN
   admins = process.env.HUBOT_AUTH_ADMIN.split ','
 else
   console.warn "#{modulename}: HUBOT_AUTH_ADMIN environment variable not set."
+
+processSyslogMessage = (msg) ->
+  console.error 'bad robotRef' unless robotRef
+  console.info msg.msg
+  #for un in fwdata.notify
+  #  robotRef.send { room: un }, usermsg unless current_un && un == current_un
+
+# Start Syslog listener
+syslogd(processSyslogMessage).listen(514, function(err) { console.log('start') })
 
 # borrowed from
 # http://stackoverflow.com/questions/9796764/how-do-i-sort-an-array-with-coffeescript
