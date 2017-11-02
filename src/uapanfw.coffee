@@ -24,6 +24,8 @@ fs = require 'fs'
 moment = require 'moment'
 CIDRMatcher = require 'cidr-matcher'
 sprintf = require("sprintf-js").sprintf
+AWS = require('aws-sdk');
+s3 = new AWS.S3();
 
 modulename = 'fw'
 data_file = modulename + ".json"
@@ -33,6 +35,8 @@ timefmt = 'YYYY-MM-DD HH:mm:ss ZZ'
 msOneMinute = 60 * 1000
 msFiveMinutes = 300 * 1000
 glApi = null;
+s3bucket = 'ua-oit-security-pub'
+s3pathPrefix = 'stats'
 
 # enable or disable auto-banning
 attackAutoBanEnabled = true
@@ -145,6 +149,11 @@ oneMinuteWorker = ->
 
 
 fiveMinuteWorker = ->
+  for list in ['autoban','blacklist','whitelist']
+    uploadReport list, 'all', 'list'
+    for type in ['url','cidr','domain']
+      continue if list is 'autoban' and type isnt 'cidr'
+      uploadReport list, type, 'terse'
   expireAttackers()
   preExpireNotify 'blacklist'
   preExpireNotify 'whitelist'
@@ -154,11 +163,38 @@ fiveMinuteWorker = ->
   setTimeout fiveMinuteWorker, msFiveMinutes
 
 
+queryAndProcessCommits = ->
+  func_name = 'queryAndProcessCommits'
+  log_date = moment().format('YYYY-MM-DD HH:mm:ss')
+  console.log "#{log_date} #{func_name} --"
+  return if glApi is null
+  q =
+    query: 'logfile:SYSTEM\/general',
+    fields: 'message,source',
+    range: 60,
+    decorate: 'true'
+  glApi.query q
+  #console.log 'exec glApi.get() with glApi.options: ', JSON.stringify glApi.options, null, 2
+  glApi.get() (err, res, body) ->
+    unless res.statusCode is 200
+      return console.warn 'Error requesting Graylog url statusCode=', res.statusCode, 'err=', err, 'options=', glApi.options
+    glresponse = JSON.parse body
+    #console.log 'glApi returns body:', JSON.stringify jsonbody, null, 2
+    events = glresponse.messages.map (m) => m.message
+    for event in events
+      processCommit event
+
 queryAndProcessAttacks = ->
   func_name = 'queryAndProcessAttacks'
   log_date = moment().format('YYYY-MM-DD HH:mm:ss')
   console.log "#{log_date} #{func_name} --"
   return if glApi is null
+  q =
+    query: 'logfile:THREAT\\/vulnerability',
+    fields: 'message,source,addrsrc,addrdst,action',
+    range: 60,
+    decorate: 'true'
+  glApi.query q
   #console.log 'exec glApi.get() with glApi.options: ', JSON.stringify glApi.options, null, 2
   glApi.get() (err, res, body) ->
     unless res.statusCode is 200
@@ -241,6 +277,29 @@ banAttackSource = (attackSource) ->
   #notifymsg += " #{list_name}. Expires `#{entry.expires}`."
   #notifySubscribers list_name, notifymsg
 
+
+uploadReport = (list_name, list_type, list_style) ->
+  func_name = 'uploadReport'
+  log_date = moment().format('YYYY-MM-DD HH:mm:ss')
+  params =
+    type: list_type
+  r = buildList list_name, params
+  s3upload "#{list_name}-#{list_type}-#{list_style}", r[list_style]
+
+
+s3upload = (filename,body,type='plain') ->
+  func_name = 's3upload'
+  log_date = moment().format('YYYY-MM-DD HH:mm:ss')
+  params =
+    Bucket: s3bucket
+    Key: "#{s3pathPrefix}/#{filename}"
+    ContentType: "text/#{type}"
+    Body: body
+  s3.putObject params, (err, data) ->
+    if err
+      return console.error "#{log_date} #{func_name}: #{err}"
+    console.log "#{log_date} #{func_name}: #{params.ContentType} #{params.Bucket}:#{params.Key} success"
+
 expireAttackers = ->
   func_name = 'expireAttackers'
   log_date = moment().format('YYYY-MM-DD HH:mm:ss')
@@ -260,30 +319,18 @@ expireAttackers = ->
 preExpireNotify = (list_name) ->
   func_name = 'preExpireNotify'
   log_date = moment().format('YYYY-MM-DD HH:mm:ss')
-  unless list_name of fwdata.lists
-    return console.error "#{log_date} #{func_name}: #{list_name} does not exist"
 
-  list = fwdata.lists[list_name]
-  removequeue = []
-  expiring = [
-    sprintf displayfmt, 'Type', 'Value', 'Expiration', 'Creator', 'Reason'
-  ]
-  for entry in fwdata.lists[list_name]
-    continue if entry.expire_notified
-    if moment(entry.expires).valueOf() < ( Date.now() + (3600*1000) )
-      entry.expire_notified = true
-      reason = ""
-      if 'reason' of entry
-        reason = entry.reason
-        reason = entry.reason.split("\n").shift().substring(0,20) if entry.reason.indexOf("\n") > 0
-      expiring.push sprintf displayfmt, entry.type, entry.val,
-        moment(entry.expires).fromNow(), entry.creator, reason
+  dt_hour_from_now = moment().add(1,'hours')
+  params =
+    expires: 'before'
+    when: dt_hour_from_now
+  r = buildList list_name, params
+  return unless r.lines > 0
+  expiring = r.list
 
-  if expiring.length > 1
-    usermsg = "fw: #{list_name} entries will expire soon: " +
-      "```"+ expiring.join("\n") + "```"
-    notifySubscribers list_name, usermsg
-    writeData()
+  usermsg = "fw: #{list_name} entries will expire soon: " +
+    "```#{expiring}```"
+  notifySubscribers list_name, usermsg
 
 
 expireEntriesFromList = (list_name) ->
@@ -293,28 +340,26 @@ expireEntriesFromList = (list_name) ->
   unless list_name of fwdata.lists
     return console.error "#{log_date} #{func_name}: #{list_name} does not exist"
 
-  list = fwdata.lists[list_name]
+  dt_now = moment()
+  params =
+    expires: 'before'
+    when: dt_now
+  r = buildList list_name, params
+  return unless r.lines > 0
+  deleted = r.list
+
   removequeue = []
-  deleted = [
-    sprintf displayfmt, 'Type', 'Value', 'Expiration', 'Creator', 'Reason'
-  ]
-  for entry in fwdata.lists[list_name] when moment(entry.expires).valueOf() < Date.now()
-    reason = ""
-    if 'reason' of entry
-      reason = entry.reason
-      reason = entry.reason.split("\n").shift().substring(0,20) if entry.reason.indexOf("\n") > 0
-    deleted.push sprintf displayfmt, entry.type, entry.val,
-      moment(entry.expires).fromNow(), entry.creator, reason
+  list = fwdata.lists[list_name]
+  for entry in list when moment(entry.expires).isBefore(dt_now)
     removequeue.push entry
 
-  if removequeue.length > 0
-    while removequeue.length > 0
-      entry = removequeue.shift()
-      list.splice(list.indexOf(entry), 1)
-    usermsg = "fw: #{list_name} entries expired and have been removed: " +
-      "```"+ deleted.join("\n") + "```"
-    notifySubscribers list_name, usermsg
-    writeData()
+  while removequeue.length > 0
+    entry = removequeue.shift()
+    list.splice(list.indexOf(entry), 1)
+  usermsg = "fw: #{list_name} entries expired and have been removed: " +
+    "```#{deleted}```"
+  notifySubscribers list_name, usermsg
+  writeData()
 
 
 notifySubscribers = (list_name, usermsg, current_un = false, who = 'all') ->
@@ -374,7 +419,8 @@ requestListEntryAddition = (robot, msg) ->
     entry.val = extra[1]
 
     # safety check !!
-    if entry.val.match /^(?:137\.229\.|199\.165\.|10\.|192\.168\.|172\.[123])/
+    #if entry.val.match /^(?:137\.229\.|199\.165\.|10\.|192\.168\.|172\.[123])/
+    if UA_Network.contains entry.val
       usermsg = "Blocking UA CIDRs is not allowed. #{safety_fail_note}"
       logmsg = "#{modulename}: #{who} request failed safety check: #{fullcmd}"
       robot.logger.info logmsg
@@ -645,46 +691,66 @@ showList = (robot, msg) ->
   unless list_name of fwdata.lists and fwdata.lists[list_name].length > 0
     return msg.send "No entries on list #{list_name}."
 
-  epb = 20 # entries per block
-  i = 0 # entries
-  arr = [] # temp container
-  output = [] # output blocks
-  arr.push sprintf displayfmt, 'Type', 'Value', 'Expiration', 'Creator', 'Reason'
-  for entry in fwdata.lists[list_name]
-    expires = moment(entry.expires)
-    if l_type and l_type != entry.type
-      continue
-    if l_search and entry.val.indexOf(l_search) == -1
-      continue
-    if expires.isBefore() # now
-      continue
-    i++
-    if arr.length >= epb
-      output.push arr.join("\n")
-      arr = []
-    else
-      reason = ""
-      if 'reason' of entry
-        reason = entry.reason
-        reason = entry.reason.split("\n").shift().substring(0,20) if entry.reason.indexOf("\n") > 0
-      arr.push sprintf displayfmt, entry.type, entry.val,
-        expires.fromNow(), entry.creator, reason
-      singlemsg = "#{entry.creator} added `#{entry.val}` (#{entry.type}) to list"
-      singlemsg += " #{list_name}. Expires #{moment(entry.expires).fromNow()}."
-      singlemsg += " Reason: ```#{entry.reason}```" if 'reason' of entry
-
-  if arr.length > 0
-    output.push arr.join("\n")
+  params = {}
+  params.type = l_type if l_type
+  params.search = l_search if l_search
+  r = buildList list_name, params
   
-  if i > 1
-    msg.send "Here is the current #{list_name}:\n"
-    msg.send "```#{ob}\n```" for ob in output
-  if i == 1
-    msg.send singlemsg
+  maxLinesViaChat = 10
+  if r.lines == 1
+    msg.send r.single
+  if r.lines > 1 and r.lines <= maxLinesViaChat
+    msg.send "*#{list_name}* #{r.lines} entries.\n```#{r.list}```"
+  if r.lines > maxLinesViaChat
+    msg.send "*#{list_name}* #{r.lines} entries.\n"+
+      ">List too long to display through chat. Try this:\n"+
+      ">https://s3-us-west-2.amazonaws.com/"+
+      "#{s3bucket}/#{s3pathPrefix}/#{list_name}-all-list"
 
   logmsg = "#{modulename}: #{func_name}: robot responded to #{msg.envelope.user.name}: " +
     "displayed #{list_name} items and expirations"
   robot.logger.info logmsg
+
+
+buildList = (list_name, params = {}) ->
+  func_name = 'buildList'
+  log_date = moment().format('YYYY-MM-DD HH:mm:ss')
+
+  lines = 0 # entries
+  out_terse = '' # string
+  delete params.type if 'type' of params and params.type is 'all'
+  out_list = sprintf "#{displayfmt}\n", 'Type', 'Value', 'Expiration', 'Creator', 'Reason'
+  for e in fwdata.lists[list_name]
+    bool_expires = false
+    dt_expires = moment(e.expires)
+    if 'expires' of params
+      dt = moment() unless 'when' of params
+      dt = moment(params.when) if 'when' of params
+      bool_expires = dt_expires.isBefore(dt)
+      bool_expires = dt_expires.isBefore(dt) if params.expires == 'before' and dt_expires.isBefore(dt)
+      bool_expires = dt_expires.isAfter(dt)  if params.expires == 'after'  and dt_expires.isAfter(dt)
+      #console.log "#{log_date} #{func_name} #{dt_expires.fromNow()} / #{dt_expires.format()} #{params.expires} #{dt.format()} #{bool_expires}"
+      continue unless bool_expires
+    else
+      continue if dt_expires.isBefore() # skip expired
+    continue if 'type' of params and params.type != e.type
+    continue if 'search' of params and e.val.indexOf(params.search) == -1
+    lines++
+    reason = ''
+    reason = e.reason if 'reason' of e
+    if reason.indexOf("\n") > 0
+      reason = e.reason.split("\n").shift().substring(0,20)
+    out_terse += "#{e.val}\n"
+    out_list += sprintf "#{displayfmt}\n", e.type, e.val, dt_expires.fromNow(), e.creator, reason
+    out_single = "#{e.creator} added `#{e.val}` (#{e.type}) to list"
+    out_single += " #{list_name}. Expires #{moment(e.expires).fromNow()}."
+    out_single += " Reason: ```#{e.reason}```" if 'reason' of e
+  output =
+    single: out_single
+    terse: out_terse
+    list: out_list
+    lines: lines
+  return output
 
 
 subscribe = (robot, msg) ->
@@ -804,13 +870,12 @@ httpGetList = (robot, req, res, list_name, list_type) ->
   logmsg = "#{modulename}: #{func_name}: web request from #{clientip}: get #{list_type} #{list_name}"
   robot.logger.info logmsg
 
-  arr = []
-  if list_name of fwdata.lists
-    for obj in fwdata.lists[list_name]
-      if obj.type == list_type and moment(obj.expires).isAfter()
-        arr.push obj.val
+  params =
+    type: list_type
+  r = buildList list_name, params
+
   content = '# nothing here yet! #'
-  content = arr.join "\n" if arr.length
+  content = r.terse if r.lines > 0
   res.setHeader 'content-type', 'text/plain'
   res.end content
 
@@ -893,17 +958,11 @@ module.exports = (robot) ->
     glApi.auth process.env.HUBOT_GRAYLOG_TOKEN, 'token'
     glApi.path 'api/search/universal/relative'
     glApi.header 'Accept', 'application/json'
-    q =
-      query: 'logfile:THREAT\\/vulnerability',
-      fields: 'message,source,addrsrc,addrdst,action',
-      range: 60,
-      decorate: 'true'
-    glApi.query q
   else
     console.warn "#{modulename}: HUBOT_GRAYLOG_URL and HUBOT_GRAYLOG_TOKEN" +
       " environment variables not set."
   setTimeout oneMinuteWorker, 5 * 1000
-  setTimeout fiveMinuteWorker, msFiveMinutes
+  setTimeout fiveMinuteWorker, 15 * 1000
 
   try
     fwdata = JSON.parse fs.readFileSync data_file, 'utf-8'
