@@ -20,6 +20,7 @@
     "cidr-matcher": "^1.0.5",
     "coffee-script": "~1.7",
     "moment": "^2.13.0",
+    "request": "^2.83.0",
     "sprintf-js": "^1.0.3"
   },
   "devDependencies": {

@@ -24,8 +24,10 @@ fs = require 'fs'
 moment = require 'moment'
 CIDRMatcher = require 'cidr-matcher'
 sprintf = require("sprintf-js").sprintf
-AWS = require('aws-sdk');
-s3 = new AWS.S3();
+AWS = require 'aws-sdk'
+s3 = new AWS.S3()
+request = require 'request'
+parse = require 'yargs-parser'
 
 modulename = 'fw'
 data_file = modulename + ".json"
@@ -37,6 +39,8 @@ msFiveMinutes = 300 * 1000
 glApi = null;
 s3bucket = 'ua-oit-security-pub'
 s3pathPrefix = 'stats'
+defaultNotifyAdmin = 'gfjohnson' # normally null, for 'all'
+defaultNotifySubscribers = 'gfjohnson' # normally null, for 'all'
 
 # enable or disable auto-banning
 attackAutoBanEnabled = true
@@ -98,7 +102,7 @@ fwnames =
   '10.9.192.11': 'Juneau-2'
 
 if process.env.HUBOT_AUTH_ADMIN
-  admins = process.env.HUBOT_AUTH_ADMIN.split ','
+  hubotAuthAdmin = process.env.HUBOT_AUTH_ADMIN.split ','
 else
   console.warn "#{modulename}: HUBOT_AUTH_ADMIN environment variable not set."
 
@@ -116,20 +120,26 @@ isString = (obj) -> toString.call(obj) == '[object String]'
 
 isObject = (obj) -> toString.call(obj) == '[object Object]'
 
-isAuthorized = (msg) ->
+isAdmin = (msg, reply = true) ->
+  console.error 'bad robotRef' unless robotRef
+  who = msg.envelope.user.name
+  return true if who in hubotAuthAdmin
+  msg.reply "This requires administrator privilege." if reply
+  return false
+
+isAuthorized = (msg, reply = true) ->
   console.error 'bad robotRef' unless robotRef
   u = msg.envelope.user
   return true if robotRef.auth.hasRole(u,'fw')
-  msg.reply "Not authorized.  Missing fw role."
+  msg.reply "Not authorized.  Missing fw role." if reply
   return false
 
-is2fa = (msg) ->
+is2fa = (msg, reply = true) ->
   console.error 'bad robotRef' unless robotRef
   u = msg.envelope.user
   return true if robotRef.auth.is2fa(u)
-  msg.reply "2fa required.  Use `auth 2fa` to validate identity."
+  msg.reply "2fa required.  Use `auth 2fa` to validate identity." if reply
   return false
-
 
 isTerse = (who) ->
   fwdata['terse'] = {} unless 'terse' of fwdata
@@ -141,6 +151,137 @@ isBanned = (ban_expires) ->
   return false unless expires.isValid()
   return true if expires.isAfter()
   return false
+
+panConfigDevicesVsysRulebaseSecurityRule = (params, callback) ->
+  func_name = 'panConfigDevicesVsysRulebaseSecurityRule'
+  params = { name: params } if isString params
+  return false unless isObject params
+  return false unless 'name' of params
+  params.path = "/rulebase/security/rules/entry[@name='#{params.name}']"
+  return panConfigDevicesVsys params, callback
+
+panConfigDeviceVsysAddress = (params, callback) ->
+  func_name = 'panConfigDeviceVsysAddress'
+  params = { name: params } if isString params
+  return false unless isObject params
+  for key in ['name']
+    return "#{func_name}: missing required param: #{key}" unless key of param
+  params.path = "/address/entry[@name='#{params.name}']"
+  return panConfigDevicesVsys params, callback
+
+panConfigDevicesVsys = (params, callback) ->
+  func_name = 'panConfigDevicesVsys'
+  params = { path: params } if isString params
+  return false unless isObject params
+  for key in ['path']
+    return "#{func_name}: missing required param: #{key}" unless key of param
+  params.vsys = 'vsys1' unless 'vsys' of params
+  params.path = "/vsys/entry[@name='#{params.vsys}']/#{params.path}"
+  return panConfigDevices params, callback
+
+panConfigDevices = (params, callback) ->
+  func_name = 'panConfigDevices'
+  params = { path: params } if isString params
+  return false unless isObject params
+  for key in ['path']
+    return "#{func_name}: missing required param: #{key}" unless key of param
+  params.device = 'localhost.localdomain' unless 'device' of params
+  params.path = "/devices/entry[@name='#{params.device}']#{params.path}"
+  return panGetConfig params, callback
+
+panConfig = (params, callback) ->
+  func_name = 'panConfig'
+  return false unless isObject params
+  for key in ['fqdn','path','key']
+    return "#{func_name}: missing required param: #{key}" unless key of param
+  params.action = 'get' unless 'action' of params
+  unless params.action in ['get']
+    return "#{func_name}: invalid action param: #{params.action}"
+  q =
+    type: 'config'
+    action: params.action
+    xpath: "/config#{params.path}"
+    key: params.key
+  options =
+    url: "https://#{params.fqdn}/api/"
+    qs: q
+    strictSSL: false
+    accept: 'text/xml'
+  request.get options, (err, res, body) ->
+    return callback(null, err) if err
+    # XXX: convert xml2json
+    return callback(body)
+  return true
+
+xmlVal = (name,val) ->
+  return '' unless name of obj
+  return "<#{name}>#{val}</#{name}>"
+
+panOpTestSecurityPolicyMatch = (params, callback) ->
+  func_name = 'panOpTestSecurityPolicyMatch'
+  # cmd: <test><security-policy-match><from></from></security-policy-match></test>
+  #params = { path: params } if isString params
+  cmd = ''
+  return false unless isObject params
+  required = [
+    'destination'
+    'destination-port'
+    'protocol'
+    'source'
+  ]
+  for key in required
+    return "#{func_name}: missing required param: #{key}" unless key of params
+    cmd += xmlVal key, params[key]
+  optional = [
+    'application'
+    'category'
+    'from'
+    'show-all'
+    'source-user'
+    'to'
+  ]
+  for key in optional
+    if key of params
+      cmd += xmlVal key, params[key]
+  params.cmd = "<test><security-policy-match>#{cmd}</security-policy-match></test>"
+  return panOp params, callback
+
+panCommit = (params, callback) ->
+  # cmd: <commit></commit>
+  #params = { path: params } if isString params
+  cmd = ''
+  return false unless isObject params
+  params.type = 'commit'
+  optional = [
+    'description'
+  ]
+  for name in optional
+    if name of params
+      cmd += xmlVal name, params[name]
+  params.cmd = xmlVal 'commit', cmd
+  return panOp params, callback
+
+panOp = (params, callback) ->
+  func_name = 'panOp'
+  return false unless isObject params
+  for key in ['fqdn','cmd']
+    return "#{func_name}: missing required param: #{key}" unless key of param
+  param.type = 'op' unless 'type' of params
+  unless params.type in ['op','commit']
+    return "#{func_name}: invalid param type: #{params.type}" 
+  q =
+    type: 'op'
+    cmd: params.cmd
+  options =
+    url: "https://#{params.fqdn}/api/"
+    qs: q
+    strictSSL: false
+    accept: 'text/xml'
+  request.get options, (err, res, body) ->
+    return callback(null, err) if err
+    # XXX: convert xml2json
+    return callback(body)
+  return true
 
 
 oneMinuteWorker = ->
@@ -262,12 +403,13 @@ banAttackSource = (attackSource) ->
   return unless attackAutoBanEnabled
   entry = 
     creator: "robot"
+    list: list_name
     created: moment().format()
     expires: attackSource.banexpires
     type: 'cidr'
     val: attackSource.attacker
     reason: "#{attackSource.attacks} attacks\n#{msgs}"
-  result = addListEntry list_name, entry
+  result = addListEntry entry
   if result isnt true
     usermsg = "Failed to add `#{entry.val}` (#{entry.type}) to list" +
       " #{list_name}.  Error: `#{result}`"
@@ -300,6 +442,7 @@ s3upload = (filename,body,type='plain') ->
       return console.error "#{log_date} #{func_name}: #{err}"
     console.log "#{log_date} #{func_name}: #{params.ContentType} #{params.Bucket}:#{params.Key} success"
 
+
 expireAttackers = ->
   func_name = 'expireAttackers'
   log_date = moment().format('YYYY-MM-DD HH:mm:ss')
@@ -315,6 +458,7 @@ expireAttackers = ->
     console.log "#{moment().format('YYYY-MM-DD HH:mm:ss')} #{func_name}: #{src} "+
       "last seen: #{moment(fwdata.attackers[src].last).fromNow()}"
     delete fwdata.attackers[src]
+
 
 preExpireNotify = (list_name) ->
   func_name = 'preExpireNotify'
@@ -362,7 +506,7 @@ expireEntriesFromList = (list_name) ->
   writeData()
 
 
-notifySubscribers = (list_name, usermsg, current_un = false, who = 'all') ->
+notifySubscribers = (list_name, usermsg, current_un = false, who = defaultNotifySubscribers) ->
   func_name = 'notifySubscribers'
   log_date = moment().format('YYYY-MM-DD HH:mm:ss')
   return console.error "#{log_date} #{func_name}: bad robotRef" unless robotRef
@@ -371,171 +515,505 @@ notifySubscribers = (list_name, usermsg, current_un = false, who = 'all') ->
   return console.error "#{log_date} #{func_name}: list empty: #{list_name}" unless isArray fwdata.notify[list_name]
   un_list = who if isArray who
   un_list = [who] if isString who
-  un_list = fwdata.notify[list_name] if who == 'all'
+  un_list = fwdata.notify[list_name] if who == 'all' or who is null
+  return notifyUsers usermsg, current_un, un_list
+
+
+notifyUsers = (usermsg, current_un = false, who = null) ->
+  func_name = 'notifyUsers'
+  log_date = moment().format('YYYY-MM-DD HH:mm:ss')
+  return console.error "#{log_date} #{func_name}: bad robotRef" unless robotRef
+  return console.error "#{log_date} #{func_name}: must specify who" if who is null
+  un_list = who if isArray who
+  un_list = [who] if isString who
   for un in un_list
     console.log "#{log_date} #{func_name} #{un}: #{usermsg}"
     robotRef.send { room: un }, usermsg unless current_un && un == current_un
+  return un_list
 
 
-notifyAdmins = (usermsg, current_un = false) ->
+notifyAdmins = (usermsg, current_un = false, who = defaultNotifyAdmin) ->
   func_name = 'notifyAdmins'
   log_date = moment().format('YYYY-MM-DD HH:mm:ss')
-  console.error "#{log_date} #{func_name}: bad robotRef" unless robotRef
-  for un in admins when un.indexOf('U') != 0
+  return console.error "#{log_date} #{func_name}: bad robotRef" unless robotRef
+  un_list = who if isArray who
+  un_list = [who] if isString who
+  un_list = hubotAuthAdmin if who == 'all' or who is null
+  for un in un_list when un.indexOf('U') != 0
+    console.log "#{log_date} #{func_name} #{un}: #{usermsg}"
     robotRef.send { room: un }, usermsg unless current_un && un == current_un
+  return un_list
 
 
 showAdmins = (robot, msg) ->
-  fullcmd = String(msg.match.shift())
+  fullcmd = String msg.match.shift()
   who = msg.envelope.user.name
 
   logmsg = "#{modulename}: #{who} requested: #{fullcmd}"
   robot.logger.info logmsg
 
-  msg.reply "#{modulename} admins: #{admins.join(', ')}"
+  msg.reply "#{modulename} admins: #{hubotAuthAdmin.join(', ')}"
 
   logmsg = "#{modulename}: robot responded to #{who}: " +
     "provided list of admins"
   robot.logger.info logmsg
 
 
-requestListEntryAddition = (robot, msg) ->
-  fullcmd = String(msg.match.shift())
+ruleAddEntryHelp = (robot, msg) ->
+  func_name = 'ruleAddEntryHelp'
   who = msg.envelope.user.name
+  arr = [
+    "#{modulename} rule <options>"
+    ""
+    "Required options:"
+    "  -N, --name    Rule name"
+    "  -f, --from    From zone, eg. Untrust"
+    "  -t, --to      To zone, e.g. DMZ"
+    "  -s, --src     Source address"
+    "  -d, --dst     Dest address"
+    "  -S, --svc     Service, e.g. service-http"
+    "  -a, --app     Application, e.g. web-browse"
+    "  -e, --erd     URL to Firewall Access Diagram"
+    ""
+    "Note: if rule name already exists, this will replace it!"
+  ]
+  output = arr.join "\n"
+  msg.send "```#{output}```"
+  robot.logger.info "#{modulename}: #{func_name}: #{who}: displayed help"
+
+
+ruleAddEntry = (robot, msg) ->
+  func_name = 'ruleAddEntry'
+  fullcmd = String msg.match.shift()
+  who = msg.envelope.user.name
+
+  robot.logger.info "#{modulename}_#{func_name}: #{who}: #{fullcmd}"
+
+  cmd = String msg.match.shift()
+  return ruleAddEntryHelp(robot,msg) if cmd is 'undefined'
+  args = parse cmd
+  args = {} unless isObject args
+  console.log "cmd: #{cmd} out: #{JSON.stringify args}"
+  return ruleAddEntryHelp(robot,msg) if 'h' of args
+  return ruleAddEntryHelp(robot,msg) if 'help' of args
+  return unless is2fa msg
+
+  keys =
+    N: 'name'
+    f: 'from'
+    t: 'to'
+    s: 'src'
+    d: 'dst'
+    S: 'svc'
+    a: 'app'
+    e: 'erd'
+  for key of keys
+    if key of args
+      args[ keys[key] ] = args[key]
+      delete args[key]
+
+  args.requestor = who
+  result = processRule args, who
+  unless result is true
+    errmsg = "Unable to submit request"
+    errmsg += ":```#{result}```" unless result is false
+    return msg.send errmsg
+
+  msg.send "Submitted rule for review!"
+
+
+normType = (val) ->
+  return val.join ", " if isArray val
+  return val if isString val
+  return "unable to handle value"
+
+
+normHttpPrefix = (val) ->
+  if val.toLowerCase().indexOf('http://') == 0
+    return val.replace(/http:\/\//i,'')
+  return val
+
+
+processRule = (rule, who) ->
+  func_name = 'processRule'
+  return false unless isObject rule
+  required = [
+    'requestor'
+    'src'
+    'dst'
+    'name'
+    'erd'
+  ]
+  for name in required
+    return "#{func_name}: missing required parameter: #{name}" unless name of rule
+  unless 'app' of rule or 'svc' of rule
+    return "#{func_name}: missing required parameter: app or svc"
+
+  # convert single values to array
+  for key in ['from','to','src','dst','app','svc']
+    continue unless key of rule # skip if not present
+    rule[key] = [ rule[key] ] unless isArray rule[key]
+
+  # check zones
+  # XXX: check against zone names
+
+  # check addresses
+  # XXX: check against address and address-group objects
+  
+  # remove slack url prefixes from fqdn style object names
+  for key in ['src','dst']
+    newarray = []
+    for val in rule[key]
+      newarray.push normHttpPrefix val
+    rule[key] = newarray
+
+  # check app
+  # XXX: check against app names
+
+  # check svc
+  # XXX: check against service and service-group objects
+
+  # add or update request queue
+  dt_now = moment()
+  req =
+    id: "#{who[0..2]}#{dt_now.format('MMDDHHmmss')}"
+    by: who
+    type: 'rule'
+    when: dt_now.format()
+    request: rule
+  addUpdateRequestEntry req
+  return true
+
+
+addUpdateRequestEntry = (req) ->
+  return false unless isObject req
+  return false unless 'id' of req
+  usermsg = markupRequest req
+  notifiedAdmins = notifyAdmins usermsg
+  notifyUsers usermsg, false, req.by unless req.by in notifiedAdmins
+
+  fwdata.requests[req.id] = req
+  writeData()
+  return true
+
+
+deleteRequestEntry = (req, res) ->
+  return false unless isObject req
+  return false unless isObject res
+  return false unless 'id' of req
+  usermsg = markupRequest req, res
+  notifiedAdmins = notifyAdmins usermsg
+  notifyUsers usermsg, false, req.by unless req.by in notifiedAdmins
+
+  delete fwdata.requests[req.id]
+  writeData()
+  return true
+
+
+markupRequest = (req, res = null) ->
+  type = req.type[0].toUpperCase() + req.type[1..-1].toLowerCase()
+  adminmsg = "#{type} requested by #{req.by}."
+  if res
+    adminmsg = "#{type} #{res.action} by #{res.by}."
+    adminmsg += "\n> *Comment* #{res.comment}" if 'comment' of res
+  adminmsg += "\nRequest metadata:"
+  for key of req
+    continue if key in ['request','type']
+    adminmsg += "\n> *#{key}* #{req[key]}"
+  adminmsg += "\nRequest:"
+  entry = req.request
+  for key of entry
+    adminmsg += "\n> *#{key}* #{entry[key]}"
+  return adminmsg
+
+
+requestQueue_NotifyAdmin_list = (entry, who, comment = null, action = 'requested', notifyList = null) ->
+  adminmsg = "List #{action} by #{who}."
+  adminmsg += "\n> *Comment* #{comment}" unless comment is null
+  for key of entry
+    adminmsg += "\n> *#{key}* #{entry[key]}"
+  #adminmsg += "> *Name* #{entry.name}"
+  #adminmsg += "\n> *Value* #{normType entry.val}"
+  #adminmsg += "\n> *Type* #{normType entry.type}"
+  #adminmsg += "\n> *Expires* #{normType entry.expires}"
+  notifyAdmins adminmsg, false, notifyList
+
+
+helperListName = (list_name) ->
+  return false unless isString list_name
+  return false unless list_name.length > 0
+  return 'whitelist' if list_name.indexOf('w') == 0
+  return 'blacklist' if list_name.indexOf('b') == 0
+  return 'autoban'   if list_name.indexOf('a') == 0
+  if list_name of fwdata.lists
+    return list_name
+  return false
+
+listAddEntryHelp = (robot, msg) ->
+  func_name = 'listAddEntryHelp'
+  who = msg.envelope.user.name
+  arr = [
+    "#{modulename} list add -L <list> -i|-d|-u <value> [options]"
+    ""
+    "Required options:"
+    "  -L <list>        List name; e.g. blacklist"
+    "  -i <ip or cidr>  Address or cidr entry, e.g. 127.0.0.1/8"
+    "  -d <domain>      Domain entry, e.g. example.com"
+    "  -u <url>         URL entry, e.g. example.com/phishing/page123"
+    ""
+    "Optional:"
+    "  -e <date>        Expiration, e.g. +12h, +30d, +6m, +1y, 2021-10-21"
+    "  -r               Request; required if not authorized and 2fa enabled"
+    "  -R <reason>      Reason for entry, e.g. \"SR 12345\""
+  ]
+  output = arr.join "\n"
+  msg.send "```#{output}```"
+  robot.logger.info "#{modulename}_#{func_name}: #{who}: displayed help"
+
+
+listAddEntry = (robot, msg) ->
+  func_name = 'listAddEntry'
+  log_date = moment().format('YYYY-MM-DD HH:mm:ss')
+  fullcmd = String msg.match[0]
+  who = msg.envelope.user.name
+
+  cmd = String msg.match[1]
+  return listAddEntryHelp(robot,msg) if cmd is 'undefined'
+  args = parse cmd
+  args = {} unless isObject args
+  console.log "#{log_date} #{func_name}: cmd: #{cmd} out: #{JSON.stringify args}"
+  return listAddEntryHelp(robot,msg) if 'h' of args
+  return listAddEntryHelp(robot,msg) if 'help' of args
 
   entry =
     creator: who
     created: moment().format()
     expires: moment().add(1, 'months').format()
 
-  list_name = String(msg.match.shift())
-  list_name = 'whitelist' if list_name.indexOf('w') == 0
-  list_name = 'blacklist' if list_name.indexOf('b') == 0
-  list_name = 'autoban' if list_name.indexOf('a') == 0
+  unless 'L' of args
+    return msg.send "#{func_name}: must specify `-L <list>`"
+  entry.list = helperListName args['L']
+  unless entry.list
+    return msg.send "#{func_name}: invalid list: #{args['L']}"
 
-  l_val = String(msg.match.shift())
-  if extra = l_val.match /^(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(?:\/\d{1,2}|))$/
+  if 'i' of args
+    addrs = false
+    if isArray args.i
+      addrs = args.i
+    if isString args.i
+      addrs = [args.i]
+      addrs = args.i.split(',') if args.i.indexOf(',') > 0
+    if addrs is false
+      usermsg = "#{func_name}: invalid ip-address or cidr"
+      logmsg = "#{modulename}: #{who} request failed: #{usermsg}"
+      robot.logger.info logmsg
+      return msg.send usermsg
+    for addr in addrs
+      if extra = addr.match /^(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})((?:\/\d{1,2}|))$/
+        if extra[2] isnt '' and extra[2] > -1 and extra[2] < 16
+          usermsg = "#{func_name}: Blocking addresses with cidr less than /16 not allowed."
+          logmsg = "#{modulename}_#{func_name}: #{who} request failed: #{usermsg}"
+          robot.logger.info logmsg
+          msg.send usermsg unless isAdmin msg, false # no redundant admin notifications
+          return notifyAdmins logmsg
+      else
+        usermsg = "#{func_name}: invalid ip-address or cidr"
+        logmsg = "#{modulename}_#{func_name}: #{who} request failed: #{usermsg}"
+        robot.logger.info logmsg
+        return msg.send usermsg
+      if UA_Network.contains addr
+        usermsg = "Blocking addresses in the UA_Network is not allowed. #{safety_fail_note}"
+        logmsg = "#{modulename}_#{func_name}: #{who} request failed safety check: #{fullcmd}"
+        robot.logger.info logmsg
+        msg.send usermsg unless isAdmin msg, false # no redundant admin notifications
+        return notifyAdmins "#{logmsg}\nReason: #{usermsg}"
     entry.type = 'cidr'
-    entry.val = extra[1]
+    entry.val = addrs[0] if addrs.length == 1
+    entry.vals = addrs if addrs.length > 1
 
-    # safety check !!
-    #if entry.val.match /^(?:137\.229\.|199\.165\.|10\.|192\.168\.|172\.[123])/
-    if UA_Network.contains entry.val
-      usermsg = "Blocking UA CIDRs is not allowed. #{safety_fail_note}"
+  if 'd' of args
+    domain = normHttpPrefix args.d
+    for arr in preventDomainBlacklist when domain.toLowerCase().match arr[1]
+      usermsg = "Blocking `#{arr[0]}` is not allowed. #{safety_fail_note}"
       logmsg = "#{modulename}: #{who} request failed safety check: #{fullcmd}"
       robot.logger.info logmsg
-      msg.reply usermsg
-      notifyAdmins "#{logmsg}\nReason: #{usermsg}"
-      return
-
-  else if extra = l_val.match /^(?:http:\/\/|)([a-zA-Z0-9][-a-zA-Z0-9\.]+)$/
+      msg.send usermsg
+      return notifyAdmins "#{logmsg}\nReason: #{usermsg}"
     entry.type = 'domain'
-    entry.val = extra[1]
+    entry.val = domain
 
-    # safety check !!
-    for arr in preventDomainBlacklist when entry.val.toLowerCase().match arr[1]
+  if 'u' of args
+    url = normHttpPrefix args.u
+    if url.toLowerCase().indexOf('https://') == 0
+      return msg.send "#{entry.list}ing of https links not supported."
+    for arr in preventUrlBlacklist when url.toLowerCase().match arr[1]
       usermsg = "Blocking `#{arr[0]}` is not allowed. #{safety_fail_note}"
       logmsg = "#{modulename}: #{who} request failed safety check: #{fullcmd}"
       robot.logger.info logmsg
-      msg.reply usermsg
-      notifyAdmins "#{logmsg}\nReason: #{usermsg}"
-      return
-
-  else
+      msg.send usermsg
+      return notifyAdmins "#{logmsg}\nReason: #{usermsg}"
     entry.type = 'url'
-    entry.val = l_val
-    if entry.val.toLowerCase().indexOf('https://') == 0
-      usermsg = "#{list_name}ing of https links not supported."
-      return msg.reply usermsg
-    if entry.val.toLowerCase().indexOf('http://') == 0
-      entry.val = entry.val.replace(/http:\/\//i,'')
+    entry.val = url
 
-    # safety check !!
-    for arr in preventUrlBlacklist when entry.val.toLowerCase().match arr[1]
-    #if entry.val.toLowerCase().match /[^\/]+(?:alaska|uaf)\.edu/
-      usermsg = "Blocking `#{arr[0]}` is not allowed. #{safety_fail_note}"
-      logmsg = "#{modulename}: #{who} request failed safety check: #{fullcmd}"
-      robot.logger.info logmsg
-      msg.reply usermsg
-      notifyAdmins "#{logmsg}\nReason: #{usermsg}"
-      return
+  unless 'type' of entry
+    return msg.send "#{modulename}_#{func_name}: must specify `-i <ip>`, `-d <domain>`, or `-u <url>`"
 
-  expires = String(msg.match.shift())
-  if expires isnt 'undefined'
-    extra = expires.match /\+(\d+)([a-zA-Z]+)/
-    if extra?
+  if 'e' of args
+    expires = args.e
+    if extra = expires.match /\+(\d+)([a-zA-Z]+)/
       n = extra[1]
       unit = extra[2]
       unless unit in ['h','hours','d','days','w','weeks','M','months','Q','quarters','y','years']
         usermsg = "Invalid unit `#{unit}` in expiration `#{expires}`. Use h or hours, d or days, w or weeks, M or months, Q or quarters, y or years."
-        return msg.reply usermsg
+        return msg.send usermsg
       entry.expires = moment().add(n,unit).format()
     else if moment(expires).isValid()
       entry.expires = moment(expires).format()
     else
       usermsg = "invalid expiration date: #{expires}"
-      return msg.reply usermsg
-  
-  result = addListEntry list_name, entry
+      return msg.send usermsg
+
+  # reason
+  if 'R' of args
+    entry.reason = args['R']
+
+  # request
+  if 'r' of args
+    dt_now = moment()
+    req =
+      id: "#{who[0..2]}#{dt_now.format('MMDDHHmmss')}"
+      by: who
+      type: 'list'
+      when: dt_now.format()
+      request: entry
+    addUpdateRequestEntry req
+    return msg.send "Queued request for review!"
+
+  unless isAuthorized msg
+    usermsg = "or specify `-r` to request listing"
+    logmsg = "#{modulename}: #{who} listing failed: #{usermsg}"
+    robot.logger.info logmsg
+    return msg.send usermsg
+  unless is2fa msg
+    usermsg = "or specify `-r` to request listing"
+    logmsg = "#{modulename}: #{who} listing failed: #{usermsg}"
+    robot.logger.info logmsg
+    return msg.send usermsg
+
+  result = addListEntry entry
   if result isnt true
-    usermsg = "Failed to add `#{entry.val}` (#{entry.type}) to fw #{list_name}."
-    usermsg += "  Error: `#{result}`"
+    usermsg = "Failed to add to list #{entry.list}. Error: `#{result}`"
     msg.send usermsg
 
-  usermsg = "Added `#{entry.val}` (#{entry.type}) to fw #{list_name}."
-  usermsg += "  Expires `#{entry.expires}`." if expires isnt 'undefined'
+  usermsg = ''
+  usermsg += "#{entry.creator} added `#{entry.val}` (#{entry.type}) to *#{entry.list}*." if 'val' of entry
+  if 'vals' of entry
+    usermsg += "#{entry.creator} added *#{entry.vals.length}* #{entry.type} entries to *#{entry.list}*."
+    usermsg += "```#{entry.vals.join ', '}```"
+  usermsg += "  Expires #{entry.expires}." if expires isnt 'undefined'
+  usermsg += "  Reason: ```#{entry.reason}```" if 'reason' of entry
+  notifySubscribers entry.list, usermsg, who
   usermsg += "  Change will be applied in < 5 minutes." unless isTerse who
   msg.send usermsg
 
-  logmsg = "#{modulename}: robot responded to #{who}: " +
-    "added entry to #{list_name}"
+  logmsg = "#{modulename}: robot responded to #{who}: "
+  logmsg += "added entry to #{entry.list}" if 'val' of entry
+  logmsg += "added #{entry.vals.length} entries to #{entry.list}" if 'vals' of entry
   robot.logger.info logmsg
-
-  notifymsg = "#{who} added `#{entry.val}` (#{entry.type}) to fw #{list_name}."
-  notifymsg += "  Expires `#{entry.expires}`." if expires isnt 'undefined'
-  notifySubscribers list_name, notifymsg, who
 
   # be terse after the first utterance
   fwdata.terse[who] = moment().add(30,'minutes').format()
 
-addListEntry = (list_name, entry) ->
+
+addListEntry = (entry) ->
   func_name = 'addListEntry'
   log_date = moment().format('YYYY-MM-DD HH:mm:ss')
 
+  vals = false
+  console.log "#{JSON.stringify entry}"
+
   # validate correct list_name
-  unless list_name in list_names
-    return "invalid list #{list_name}"
-  unless entry['creator']
-    return "invalid creator"
-  unless entry['created']
-    return "invalid created"
+  return "parameter not object" unless isObject entry
+  return "must specify: list"     unless 'list' of entry
+  return "must specify: creator"  unless 'creator' or entry
+  return "must specify: created"  unless 'created' of entry
+  return "must specify: type"     unless 'type' of entry
+  return "must specify: expires"  unless 'expires' of entry
+  vals = [entry.val] if 'val' of entry
+  vals = entry.vals if 'vals' of entry
+  return "must specify: val or vals" if vals is false
+  return "invalid list #{entry.list}" unless entry.list in list_names
 
-  logmsg = "#{modulename}: #{func_name}: #{entry.creator} requested:"
-  logmsg += " #{list_name} #{entry.type} #{entry.val}"
+  logmsg = "#{modulename}_#{func_name}: #{entry.creator} requested:"
+  logmsg += " #{entry.list} #{entry.type} #{entry.val}" if 'val' of entry
+  logmsg += " #{entry.list} #{entry.type} #{entry.vals.length} entries" if 'vals' of entry
   logmsg += " expires #{moment(entry.expires).format(timefmt)}"
+  logmsg += " reason #{entry.reason}" if 'reason' of entry
   robotRef.logger.info logmsg
 
-  fwdata.lists[list_name] = [] unless list_name of fwdata.lists
-  fwdata.lists[list_name].push entry
+  fwdata.lists[entry.list] = [] unless entry.list of fwdata.lists
+
+  for val in vals
+    e =
+      creator: entry.creator
+      created: entry.created
+      expires: entry.expires
+      list: entry.list
+      type: entry.type
+      val: val
+    e.reason = entry.reason if 'reason' of entry
+    logmsg = "#{modulename}_#{func_name}: #{e.creator} added"
+    logmsg += " #{e.list} #{e.type} #{e.val}"
+    logmsg += " expires #{moment(e.expires).fromNow()}"
+    logmsg += " reason #{e.reason}" if 'reason' of e
+    robotRef.logger.info logmsg
+    fwdata.lists[entry.list].push e
+
   writeData()
-
-  logmsg = "#{modulename}: #{func_name}: #{entry.creator} added"
-  logmsg += " #{list_name} #{entry.type} #{entry.val}"
-  logmsg += " expires #{moment(entry.expires).fromNow()}"
-  robotRef.logger.info logmsg
 
   return true
 
-extendListEntry = (robot, msg) ->
-  fullcmd = String(msg.match.shift())
+
+listExtendEntryHelp = (robot, msg) ->
+  func_name = 'listExtendEntryHelp'
+  who = msg.envelope.user.name
+  arr = [
+    "#{modulename} list extend -L <list> -s <searchstring> -e <expiration>"
+    ""
+    "Required options:"
+    "  -L    List name; e.g. blacklist"
+    "  -s    Search string, must only match one entry; e.g. 127.0.0.1"
+    "  -e    Expiration, e.g. -12h, +36h, -1d, +30d, +6m, +1y, 2021-10-21, etc"
+  ]
+  output = arr.join "\n"
+  msg.send "```#{output}```"
+  robot.logger.info "#{modulename}: #{func_name}: #{who}: displayed help"
+
+
+listExtendEntry = (robot, msg) ->
+  func_name = 'listExtendEntry'
+  log_date = moment().format('YYYY-MM-DD HH:mm:ss')
+  fullcmd = String msg.match[0]
   who = msg.envelope.user.name
 
-  list_name = String(msg.match.shift())
-  list_name = 'whitelist' if list_name.indexOf('w') == 0
-  list_name = 'blacklist' if list_name.indexOf('b') == 0
-  list_name = 'autoban' if list_name.indexOf('a') == 0
+  robot.logger.info "#{modulename}: #{func_name}: #{who}: #{fullcmd}"
 
-  l_search = String(msg.match.shift())
+  cmd = String msg.match[1]
+  return listExtendEntryHelp(robot,msg) if cmd is 'undefined'
+  args = parse cmd
+  args = {} unless isObject args
+  return listExtendEntryHelp(robot,msg) if 'h' of args
+  return listExtendEntryHelp(robot,msg) if 'help' of args
+
+  unless 'L' of args
+    return msg.send "#{func_name}: must specify `-L <list>`"
+  list_name = helperListName args['L']
+  unless list_name
+    return msg.send "#{func_name}: invalid list: #{args['L']}"
+  
+  unless 's' of args
+    return msg.send "#{func_name}: must specify `-s <searchstring>`"
+  l_search = args.s
 
   if l_search.toLowerCase().indexOf('https://') == 0
     usermsg = "#{list_name}ing of https links not supported."
@@ -562,19 +1040,18 @@ extendListEntry = (robot, msg) ->
     return msg.reply usermsg
   #console.log entry
 
-  expires = String(msg.match.shift())
-  if expires is 'undefined'
+  unless 'e' of args
     usermsg = "you must provide a new absolute or relative expiration"
     return msg.reply usermsg
 
-  extra = expires.match /(-|\+|)(\d+)([a-zA-Z])/
-  if extra?
+  expires = args.e
+  if extra = expires.match /(-|\+|)(\d+)([a-zA-Z])/
     direction = extra.shift()
     n = extra.shift()
     unit = extra.shift()
-    unless unit in ['h','d','w','M','Q','y']
-      usermsg = "Invalid unit `#{unit}` in expiration `#{expires}`. Use h for hours, d for days, w for weeks, M for months, Q for quarters, or y for years."
-      return msg.reply usermsg
+    unless unit in ['h','hours','d','days','w','weeks','M','months','Q','quarters','y','years']
+      usermsg = "Invalid unit `#{unit}` in expiration `#{expires}`. Use h or hours, d or days, w or weeks, M or months, Q or quarters, y or years."
+      return msg.send usermsg
     if direction == '+'
       entry.expires = moment(entry.expires).add(n,unit).format()
     else if direction == '-'
@@ -585,7 +1062,7 @@ extendListEntry = (robot, msg) ->
     entry.expires = moment(expires).format()
   else
     usermsg = "invalid expiration date: #{expires}"
-    return msg.reply usermsg
+    return msg.send usermsg
 
   obj.expire_notified = false
 
@@ -606,74 +1083,154 @@ extendListEntry = (robot, msg) ->
   notifySubscribers list_name, usermsg, who
 
 
-deleteListEntry = (robot, msg) ->
-  fullcmd = String(msg.match.shift())
+listDeleteEntryHelp = (robot, msg) ->
+  func_name = 'listDeleteEntryHelp'
+  who = msg.envelope.user.name
+  arr = [
+    "#{modulename} list delete -L <list> -s|-i|-d|-u <value> [options]"
+    ""
+    "Required options:"
+    "  -L <list>        List name; e.g. blacklist"
+    "  -i <ip or cidr>  Address or cidr entry, e.g. 127.0.0.1/8"
+    "  -d <domain>      Domain entry, e.g. example.com"
+    "  -u <url>         URL entry, e.g. example.com/phishing/page123"
+    ""
+    "Optional:"
+    "  -r               Request; required if not authorized and 2fa enabled"
+  ]
+  output = arr.join "\n"
+  msg.send "```#{output}```"
+  robot.logger.info "#{modulename}_#{func_name}: #{who}: displayed help"
+
+
+listDeleteEntry = (robot, msg) ->
+  func_name = 'listDeleteEntry'
+  log_date = moment().format('YYYY-MM-DD HH:mm:ss')
+  fullcmd = String msg.match[0]
   who = msg.envelope.user.name
 
-  list_name = String(msg.match.shift())
-  list_name = 'whitelist' if list_name.indexOf('w') == 0
-  list_name = 'blacklist' if list_name.indexOf('b') == 0
-  list_name = 'autoban' if list_name.indexOf('a') == 0
+  robot.logger.info "#{modulename}_#{func_name} #{who} requested: #{fullcmd}"
 
-  #l_type = String(msg.match.shift())
-  l_type = false
-  l_search = String(msg.match.shift())
+  cmd = String msg.match[1]
+  return listDeleteEntryHelp(robot,msg) if cmd is 'undefined'
+  args = parse cmd
+  args = {} unless isObject args
+  return listDeleteEntryHelp(robot,msg) if 'h' of args
+  return listDeleteEntryHelp(robot,msg) if 'help' of args
 
-  if l_search.toLowerCase().indexOf('https://') == 0
-    usermsg = "#{list_name}ing of https links not supported."
-    return msg.reply usermsg
+  q =
+    axis: 0
 
-  if l_search.toLowerCase().indexOf('http://') == 0
-    l_search = l_search.replace(/http:\/\//i,'')
+  unless 'L' of args
+    return msg.send "#{func_name}: must specify `-L <list>`"
 
-  logmsg = "#{modulename}: #{who} requested: " +
-    "#{list_name} delete #{l_type ? l_type : ''} #{l_search}"
-  robot.logger.info logmsg
+  q.list = helperListName args['L']
+  unless q.list
+    return msg.send "#{func_name}: invalid list: #{q.list}"
+  
+  required = 0
+  if 's' of args
+    required++
+    q.search = args.s
+    if q.search.toLowerCase().indexOf('https://') == 0
+      return msg.reply "https links not supported"
+    if args.s.toLowerCase().indexOf('http://') == 0
+      q.search = args.s.replace(/http:\/\//i,'')
+    q.axis += 1
 
+  if 'i' of args
+    required++
+    addrs = false
+    if isArray args.i
+      addrs = args.i
+    if isString args.i
+      addrs = [args.i]
+      addrs = args.i.split(',') if args.i.indexOf(',') > 0
+    if addrs is false
+      usermsg = "#{func_name}: invalid ip-address or cidr"
+      logmsg = "#{modulename}: #{who} request failed: #{usermsg}"
+      robot.logger.info logmsg
+      return msg.send usermsg
+    q.axis += 2
+    q.type = 'cidr'
+    q.addrs = addrs
+
+  # display help unless one of the rquired parameter is specified
+  return listDeleteEntryHelp(robot,msg) unless required > 0
+
+  searched = 0
   deleted = []
-  new_entry = []
+  new_listdata = []
+  listdata = fwdata.lists[q.list]
   deleted.push sprintf displayfmt, 'Type', 'Value', 'Expiration', 'Creator', 'Reason'
-  for entry in fwdata.lists[list_name]
-    expires = moment(entry.expires)
-    if l_type and l_type != entry.type
-      new_entry.push entry
+  for e in listdata
+    axis = 0
+    #console.log "#{log_date} #{func_name}: #{JSON.stringify e}"
+    # if not a match, add it to the keepers
+    if 'type' of q
+      test = q.type == e.type
+      #console.log "#{log_date} #{func_name}: TYPE e.type|#{e.type} == q.type|#{q.type} = test|#{test}"
+      if test
+        axis++
+        #console.log "#{log_date} #{func_name}: incremented axis: #{axis}"
+    if 'search' of q
+      test = e.val.indexOf(q.search) == -1
+      #console.log "#{log_date} #{func_name}: SEARCH e.val|#{e.val} q.search|#{q.search} test|#{test}"
+      if test
+        axis++
+        #console.log "#{log_date} #{func_name}: incremented axis: #{axis}"
+    if 'addrs' of q
+      test = e.val in q.addrs
+      #console.log "#{log_date} #{func_name}: ADDRS e.val|#{e.val} q.addrs|#{q.addrs} test|#{test}"
+      if test
+        axis++
+        #console.log "#{log_date} #{func_name}: incremented axis: #{axis}"
+    if axis < q.axis
+      #console.log "#{log_date} #{func_name}: axis|#{axis} < q.axis|#{q.axis} = NOT ENOUGH AXIS, keeping entry"
+      new_listdata.push e
       continue
-    if l_search and entry.val.indexOf(l_search) == -1
-      new_entry.push entry
-      continue
-    if expires.isBefore() # now
-      new_entry.push entry
-      continue
-    reason = ""
-    if 'reason' of entry
-      reason = entry.reason
-      reason = entry.reason.split("\n").shift().substring(0,20) if entry.reason.indexOf("\n") > 0
-    deleted.push sprintf displayfmt, entry.type, entry.val,
-      expires.fromNow(), entry.creator, reason
+    #console.log "#{log_date} #{func_name}: axis|#{axis} >= q.axis|#{q.axis} = ENOUGH AXIS, deleting entry"
 
-  deltaN = fwdata.lists[list_name].length - new_entry.length
+    expires = moment(e.expires)
+    #if expires.isBefore() # now
+    #  new_listdata.push e
+    #  continue
+
+    # display
+    reason = ''
+    if 'reason' of e
+      unless e.reason.indexOf("\n") > 0
+        reason = e.reason
+      else
+        reason = e.reason.split("\n").shift().substring(0,20)
+    deleted.push sprintf displayfmt, e.type, e.val,
+      expires.fromNow(), e.creator, reason
+
+  deltaN = listdata.length - new_listdata.length
   if deltaN > 0
-    usermsg = "#{who} removed `#{deltaN}` fw #{list_name} entries."
-    usermsg += "  Change will be applied in < 5 minutes." unless isTerse who
-    usermsg += "  Removed: ```"+ deleted.join("\n") + "```"
-    fwdata.lists[list_name] = new_entry
+    usermsg = "#{who} removed *#{deltaN}* entries from *#{q.list}*"
+    usermsg += "```"+ deleted.join("\n") + "```"
+    fwdata.lists[q.list] = new_listdata
     writeData()
   else
-    usermsg = "#{list_name} delete request did not match any records."
-  msg.reply usermsg
+    usermsg = "#{q.list} delete request did not match any records."
+  msg.send usermsg
 
-  logmsg = "#{modulename}: robot responded to #{msg.envelope.user.name}: " +
-    "removed #{deltaN} entries from #{list_name}"
+  logmsg = "#{modulename}_#{func_name} #{who} response: " +
+    "removed #{deltaN} entries from #{q.list}"
   robot.logger.info logmsg
 
   if deltaN > 0
-    #usermsg = usermsg.replace(/  Change will be applied in \< 5 minutes\./, '')
-    notifySubscribers list_name, usermsg, who
+    notifySubscribers q.list, usermsg, who
 
 
-showList = (robot, msg) ->
-  func_name = 'showList'
+listShow = (robot, msg) ->
+  func_name = 'listShow'
   log_date = moment().format('YYYY-MM-DD HH:mm:ss')
+  fullcmd = String msg.match[0]
+  who = msg.envelope.user.name
+
+  robot.logger.info "#{modulename}_#{func_name} #{who} requested: #{fullcmd}"
 
   list_name = String(msg.match[1])
   list_name = 'whitelist' if list_name.indexOf('w') == 0
@@ -684,9 +1241,6 @@ showList = (robot, msg) ->
   l_search = false
   if msg.match[2]?
     l_search = String(msg.match[2])
-
-  logmsg = "#{modulename}: #{func_name}: #{msg.envelope.user.name} requested: show list #{list_name}"
-  robot.logger.info logmsg
 
   unless list_name of fwdata.lists and fwdata.lists[list_name].length > 0
     return msg.send "No entries on list #{list_name}."
@@ -709,6 +1263,194 @@ showList = (robot, msg) ->
 
   logmsg = "#{modulename}: #{func_name}: robot responded to #{msg.envelope.user.name}: " +
     "displayed #{list_name} items and expirations"
+  robot.logger.info logmsg
+
+
+requestShowHelp = (robot, msg) ->
+  func_name = 'requestShowHelp'
+  who = msg.envelope.user.name
+  arr = [
+    "#{modulename} request show -a|-i <id>|-n <name>|-t <type>"
+    ""
+    "Options:"
+    "  -a    All requests"
+    "  -i    Request id"
+    "  -n    Requestor name"
+    "  -t    Request type"
+  ]
+  output = arr.join "\n"
+  msg.send "```#{output}```"
+  robot.logger.info "#{modulename}: #{func_name}: #{who}: displayed help"
+
+
+requestShow = (robot, msg) ->
+  func_name = 'requestShow'
+  log_date = moment().format('YYYY-MM-DD HH:mm:ss')
+  fullcmd = String msg.match[0]
+  who = msg.envelope.user.name
+
+  robot.logger.info "#{modulename}: #{func_name}: #{who}: #{fullcmd}"
+
+  cmd = String msg.match[1]
+  return requestShowHelp(robot,msg) if cmd is 'undefined'
+  args = parse cmd
+  args = {} unless isObject args
+  return requestShowHelp(robot,msg) if 'h' of args
+  return requestShowHelp(robot,msg) if 'help' of args
+
+  if 'i' of args
+    unless args.i of fwdata.requests
+      msg.send "#{func_name}: request does not exist: id=#{args.i}"
+    usermsg = markupRequest fwdata.requests[args.i]
+    msg.send usermsg
+    logmsg = "#{modulename}: #{func_name}: responded to #{who}: " +
+      "displaying id #{args.i}"
+    return robot.logger.info logmsg
+
+  out = ''
+  requestCount = 0
+  for key of fwdata.requests
+    req = fwdata.requests[key]
+    continue if 'u' of args and req.by isnt args.u
+    continue if 't' of args and req.type isnt args.t
+    requestCount += 1
+    out += "type=#{req.type} id=#{req.id} by=#{req.by} when=#{req.when}\n"
+  
+  if requestCount > 0
+    msg.send "Requests:\n```#{out}```"
+  else
+    msg.send "No requests in queue; nice work!"
+
+  logmsg = "#{modulename}: #{func_name}: responded to #{who}: " +
+    "displayed #{requestCount} requests"
+  robot.logger.info logmsg
+
+
+requestApproveHelp = (robot, msg) ->
+  func_name = 'requestApproveHelp'
+  who = msg.envelope.user.name
+  arr = [
+    "#{modulename} request approve -i <id> -m \"<message>\""
+    ""
+    "Required options:"
+    "  -i    Request id"
+    "  -m    Approval message"
+    ""
+    "Note: immediate upon approval the request will be applied!"
+  ]
+  output = arr.join "\n"
+  msg.send "```#{output}```"
+  robot.logger.info "#{modulename}: #{func_name}: #{who}: displayed help"
+
+
+requestApprove = (robot, msg) ->
+  func_name = 'requestApprove'
+  log_date = moment().format('YYYY-MM-DD HH:mm:ss')
+  fullcmd = String msg.match[0]
+  who = msg.envelope.user.name
+
+  robot.logger.info "#{modulename}: #{func_name}: #{who}: #{fullcmd}"
+
+  cmd = String msg.match[1]
+  return requestDeclineHelp(robot,msg) if cmd is 'undefined'
+  args = parse cmd
+  args = {} unless isObject args
+  return requestDeclineHelp(robot,msg) if 'h' of args
+  return requestDeclineHelp(robot,msg) if 'help' of args
+  console.log "#{log_date} #{func_name}: cmd: #{cmd} out: #{JSON.stringify args}"
+  return unless is2fa msg
+
+  unless 'i' of args
+    return msg.send "#{func_name}: missing required parameter: `-i <id>`"
+  id = args.i
+
+  unless 'm' of args
+    return msg.send "#{func_name}: missing required parameter: `-m \"<msg>\"`"
+  message = args.m
+
+  unless id of fwdata.requests
+    return msg.send "#{func_name}: request not found: id=#{id}"
+
+  req = fwdata.requests[id]
+
+  result = false
+  if req.type is 'list'
+    result = addListEntry(req.request)
+  else
+    result = "unable to process request type: #{req.type}"
+
+  unless result is true
+    return msg.send "Failed to apply #{req.type}.  Error: ```#{result}```"
+
+  res =
+    by: who
+    action: 'approved'
+    comment: args.m
+  deleteRequestEntry req, res
+
+  #msg.send "Request #{id} approved with message: ```#{message}```"
+
+  logmsg = "#{modulename}: #{func_name}: responded to #{who}: " +
+    "request #{id} approved with message: #{message}"
+  robot.logger.info logmsg
+
+
+requestDeclineHelp = (robot, msg) ->
+  func_name = 'requestDeclineHelp'
+  who = msg.envelope.user.name
+  arr = [
+    "#{modulename} request decline -i <id> -m <message>"
+    ""
+    "Required options:"
+    "  -i    Request id"
+    "  -m    Decline message"
+    ""
+    "Note: immediate upon decline the request is removed and notification sent."
+  ]
+  output = arr.join "\n"
+  msg.send "```#{output}```"
+  robot.logger.info "#{modulename}: #{func_name}: #{who}: displayed help"
+
+
+requestDecline = (robot, msg) ->
+  func_name = 'requestDecline'
+  log_date = moment().format('YYYY-MM-DD HH:mm:ss')
+  fullcmd = String msg.match[0]
+  who = msg.envelope.user.name
+
+  robot.logger.info "#{modulename}_#{func_name}: #{who}: #{fullcmd}"
+
+  cmd = String msg.match[1]
+  return requestDeclineHelp(robot,msg) if cmd is 'undefined'
+  args = parse cmd
+  args = {} unless isObject args
+  return requestDeclineHelp(robot,msg) if 'h' of args
+  return requestDeclineHelp(robot,msg) if 'help' of args
+  console.log "#{log_date} #{func_name}: cmd: #{cmd} out: #{JSON.stringify args}"
+  return unless is2fa msg
+
+  unless 'i' of args
+    return msg.send "#{func_name}: missing required parameter: `-i <id>`"
+  id = args.i
+
+  unless 'm' of args
+    return msg.send "#{func_name}: missing required parameter: `-m \"<msg>\"`"
+  message = args.m
+
+  unless id of fwdata.requests
+    return msg.send "#{func_name}: request not found: id=#{id}"
+
+  req = fwdata.requests[id]
+  res =
+    by: who
+    action: 'declined'
+    comment: args.m
+  deleteRequestEntry req, res
+
+  #msg.send "Request #{id} declined with message: ```#{message}```"
+
+  logmsg = "#{modulename}: #{func_name}: responded to #{who}: " +
+    "request #{id} declined with message: #{message}"
   robot.logger.info logmsg
 
 
@@ -735,16 +1477,19 @@ buildList = (list_name, params = {}) ->
       continue if dt_expires.isBefore() # skip expired
     continue if 'type' of params and params.type != e.type
     continue if 'search' of params and e.val.indexOf(params.search) == -1
-    lines++
     reason = ''
     reason = e.reason if 'reason' of e
     if reason.indexOf("\n") > 0
       reason = e.reason.split("\n").shift().substring(0,20)
-    out_terse += "#{e.val}\n"
-    out_list += sprintf "#{displayfmt}\n", e.type, e.val, dt_expires.fromNow(), e.creator, reason
-    out_single = "#{e.creator} added `#{e.val}` (#{e.type}) to list"
-    out_single += " #{list_name}. Expires #{moment(e.expires).fromNow()}."
-    out_single += " Reason: ```#{e.reason}```" if 'reason' of e
+    vals = [e.val] if 'val' of e
+    vals = e.vals if 'vals' of e
+    for val in vals
+      lines++
+      out_terse += "#{val}\n"
+      out_list += sprintf "#{displayfmt}\n", e.type, val, dt_expires.fromNow(), e.creator, reason
+      out_single = "#{e.creator} added `#{val}` (#{e.type}) to list"
+      out_single += " #{list_name}. Expires #{moment(e.expires).fromNow()}."
+      out_single += " Reason: ```#{e.reason}```" if 'reason' of e
   output =
     single: out_single
     terse: out_terse
@@ -753,7 +1498,7 @@ buildList = (list_name, params = {}) ->
   return output
 
 
-subscribe = (robot, msg) ->
+listSubscribe = (robot, msg) ->
   user = msg.envelope.user
   list_name = msg.match[1]
   list_name = 'whitelist' if list_name.indexOf('w') == 0
@@ -768,8 +1513,8 @@ subscribe = (robot, msg) ->
   fwdata.notify[list_name] = [] unless list_name of fwdata.notify
   fwdata.notify[list_name].push who unless who in fwdata.notify[list_name]
 
-  usermsg = "Added `#{who}` to list #{list_name}."
-  msg.reply usermsg
+  usermsg = "Added #{who} to list #{list_name}."
+  msg.send usermsg
 
   logmsg = "#{modulename}: robot responded to #{user.name}: " +
     "added #{who} to list #{list_name}"
@@ -778,7 +1523,7 @@ subscribe = (robot, msg) ->
   writeData()
 
 
-unsubscribe = (robot, msg) ->
+listUnsubscribe = (robot, msg) ->
   user = msg.envelope.user
   list_name = msg.match[1]
   list_name = 'whitelist' if list_name.indexOf('w') == 0
@@ -801,8 +1546,8 @@ unsubscribe = (robot, msg) ->
 
   fwdata.notify[list_name].splice(n, 1)
 
-  usermsg = "Removed `#{who}` from list #{list_name}."
-  msg.reply usermsg
+  usermsg = "Removed #{who} from list #{list_name}."
+  msg.send usermsg
 
   logmsg = "#{modulename}: robot responded to #{user.name}: " +
     "removed #{who} from list #{list_name}"
@@ -811,8 +1556,8 @@ unsubscribe = (robot, msg) ->
   writeData()
 
 
-showSubscribers = (robot, msg) ->
-  func_name = 'showSubscribers'
+listShowSubscribers = (robot, msg) ->
+  func_name = 'listShowSubscribers'
   who = msg.envelope.user.name
   list_name = ''
 
@@ -923,21 +1668,22 @@ rememberCheckin = (clientip,list_name,l_type) ->
 
 showHelp = (robot, msg) ->
   who = msg.envelope.user.name
+  admin = isAdmin msg
   arr = [
-    "#{modulename} show list <list> [searchterm]"
-    "#{modulename} add <list> <domain.tld|weburl.tld/etc|x.x.x.x> [+7d]"
-    "#{modulename} del <list> <domain.tld|weburl.tld/etc|x.x.x.x>"
-    "#{modulename} extend <list> <weburl.tld/etc|x.x.x.x> [[+-]20d]"
-    "#{modulename} subscribe <list> [username] - subscribe to change notifications"
-    "#{modulename} unsubscribe <list> [username]"
-    "#{modulename} show subscribers [list]"
+    "#{modulename} list show <list> [searchterm]"
+    "#{modulename} list add -h"
+    "#{modulename} list del -h"
+    "#{modulename} list extend -h"
+    "#{modulename} list subscribe <list> [username] - subscribe to change notifications"
+    "#{modulename} list unsubscribe <list> [username]"
+    "#{modulename} list subscribers [list]"
+    "#{modulename} rule <options>"
   ]
+  arr.push "#{modulename} request show [options]" if admin
+  arr.push "#{modulename} request approve <options>" if admin
 
-  cmds = ['```']
-  cmds.push str for str in arr
-  cmds.push '```'
-
-  msg.reply cmds.join "\n"
+  out = arr.join "\n"
+  msg.send "```#{out}```"
 
   logmsg = "#{modulename}: robot responded to #{who}: " +
     "displayed #{modulename} help"
@@ -970,9 +1716,10 @@ module.exports = (robot) ->
     fwdata =              {} unless isObject fwdata
     fwdata['notify'] =    {} unless isObject fwdata['notify']
     fwdata['lists'] =     {} unless isObject fwdata['lists']
-    fwdata['firewalls'] = [] unless isArray fwdata['firewalls']
+    fwdata['firewalls'] = [] unless isArray  fwdata['firewalls']
     fwdata['terse'] =     {} unless isObject fwdata['terse']
     fwdata['attackers'] = {} unless isObject fwdata['attackers']
+    fwdata['requests'] =  {} unless isObject fwdata['requests']
   catch error
     unless error.code is 'ENOENT'
       console.log("#{modulename}: unable to read #{data_file}: ", error)
@@ -1004,42 +1751,52 @@ module.exports = (robot) ->
   robot.respond /(?:firewall|fw)(?: help| h|)$/, (msg) ->
     return showHelp robot, msg
 
-  robot.respond /(?:firewall|fw) show (?:admins)$/i, (msg) ->
+  robot.respond /(?:firewall|fw) list show (?:admins)$/i, (msg) ->
     return showAdmins robot, msg
 
-  robot.respond /(?:firewall|fw) show (?:checkins|firewalls|fw)$/i, (msg) ->
+  robot.respond /(?:firewall|fw) list show (?:checkins|firewalls|fw)$/i, (msg) ->
     return showCheckins robot, msg
 
-  robot.respond /(?:firewall|fw)(?: show|) subscribers(?: (.+)|)$/i, (msg) ->
-    return showSubscribers robot, msg
+  robot.respond /(?:firewall|fw) list subscribers(?: (.+)|)$/i, (msg) ->
+    return listShowSubscribers robot, msg
 
-  robot.respond /(?:firewall|fw) show list ([^ ]+)(?: (.+)|)$/i, (msg) ->
-    return showList robot, msg
+  robot.respond /(?:firewall|fw) list show ([^ ]+)(?: (.+)|)$/i, (msg) ->
+    return listShow robot, msg
 
-  robot.respond /(?:firewall|fw) (?:add|a) ([^ ]+) ([^ ]+)(?: ([^ ]+)|)$/i, (msg) ->
+  robot.respond /(?:firewall|fw) list (?:add|a)(?: (.+)|)$/i, (msg) ->
+    return listAddEntry robot, msg
+
+  robot.respond /(?:firewall|fw) list (?:delete|del|d)(?: (.+)|)$/i, (msg) ->
     return unless isAuthorized msg
     return unless is2fa msg
 
-    return requestListEntryAddition robot, msg
+    return listDeleteEntry robot, msg
 
-  robot.respond /(?:firewall|fw) (?:delete|del|d) ([^ ]+) ([^ ]+)$/i, (msg) ->
+  robot.respond /(?:firewall|fw) list (?:extend|ext|e) ([^ ]+) ([^ ]+)(?: ([^ ]+)|)$/i, (msg) ->
     return unless isAuthorized msg
     return unless is2fa msg
 
-    return deleteListEntry robot, msg
+    return listExtendEntry robot, msg
 
-  robot.respond /(?:firewall|fw) (?:extend|ext|e) ([^ ]+) ([^ ]+)(?: ([^ ]+)|)$/i, (msg) ->
+  robot.respond /(?:firewall|fw) list (?:subscribe|sub) ([^ ]+)(?: ([^ ]+)|)$/i, (msg) ->
+    return listSubscribe robot, msg
+
+  robot.respond /(?:firewall|fw) list (?:unsubscribe|unsub) ([^ ]+)(?: ([^ ]+)|)$/i, (msg) ->
+    return listUnsubscribe robot, msg
+
+  robot.respond /(?:firewall|fw) (?:rule|r)(?: (.+)|)$/i, (msg) ->
     return unless isAuthorized msg
-    return unless is2fa msg
+    return ruleAddEntry robot, msg
 
-    return extendListEntry robot, msg
+  robot.respond /(?:firewall|fw) (?:request|req) show(?: (.+)|)$/i, (msg) ->
+    return unless isAdmin msg
+    return requestShow robot, msg
 
-  robot.respond /(?:firewall|fw) (?:subscribe|sub) ([^ ]+)(?: ([^ ]+)|)$/i, (msg) ->
-    return subscribe robot, msg
+  robot.respond /(?:firewall|fw) (?:request|req) (?:approve|app|a)(?: (.+)|)$/i, (msg) ->
+    return unless isAdmin msg
+    return requestApprove robot, msg
 
-  robot.respond /(?:firewall|fw) (?:unsubscribe|unsub) ([^ ]+)(?: ([^ ]+)|)$/i, (msg) ->
-    return unsubscribe robot, msg
-
-  robot.respond /(?:firewall|fw) unban ([0-9\.]+)$/i, (msg) ->
-    return unban robot, msg
+  robot.respond /(?:firewall|fw) (?:request|req) (?:decline|dec|d)(?: (.+)|)$/i, (msg) ->
+    return unless isAdmin msg
+    return requestDecline robot, msg
 
