@@ -18,9 +18,9 @@
   "dependencies": {
     "aws-sdk": "^2.141.0",
     "cidr-matcher": "^1.0.5",
-    "coffee-script": "~1.7",
+    "coffee-script": "^1.6.3",
     "moment": "^2.13.0",
-    "request": "^2.83.0",
+    "request": "^2.25.0",
     "sprintf-js": "^1.0.3"
   },
   "devDependencies": {
