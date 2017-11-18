@@ -39,8 +39,8 @@ msFiveMinutes = 300 * 1000
 glApi = null;
 s3bucket = 'ua-oit-security-pub'
 s3pathPrefix = 'stats'
-defaultNotifyAdmin = 'gfjohnson' # normally null, for 'all'
-defaultNotifySubscribers = 'gfjohnson' # normally null, for 'all'
+defaultNotifyAdmin = 'all' # normally null, for 'all'
+defaultNotifySubscribers = 'all' # normally null, for 'all'
 
 # enable or disable auto-banning
 attackAutoBanEnabled = true
