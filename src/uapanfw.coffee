@@ -1731,6 +1731,7 @@ listHelp = (robot, msg) ->
 
 
 writeData = ->
+  func_name = 'writeData'
   fs.writeFileSync data_file, JSON.stringify(fwdata), 'utf-8'
   logmsg = "#{modulename}_#{func_name}: wrote #{data_file}"
   robotRef.logger.info logmsg
